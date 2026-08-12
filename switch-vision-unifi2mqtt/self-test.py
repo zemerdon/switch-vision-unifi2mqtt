@@ -192,6 +192,89 @@ def main() -> int:
     finally:
         m.Publisher, m.UniFiClient = old_publisher, old_api
 
+
+    # Hardware-free fixture regression: realistic UniFi data through
+    # normalization and MQTT/Home Assistant Discovery generation.
+    fixture_path = Path(__file__).with_name("fixtures") / "unifi_devices_fixture.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    normalized = m.normalize_device(fixture["summary"], fixture["detail"], fixture["stats"])
+
+    assert normalized["name"] == "Garage Switch"
+    assert normalized["model"] == "USW Lite 16 PoE"
+    assert normalized["firmware"] == "7.4.1"
+    assert normalized["state"] == "ONLINE"
+    assert normalized["system"]["cpu_utilization_pct"] == 12.5
+    assert normalized["system"]["memory_utilization_pct"] == 43.2
+    assert normalized["system"]["uplink_tx_rate_bps"] == 123456
+    assert normalized["system"]["uplink_rx_rate_bps"] == 654321
+    assert len(normalized["ports"]) == 4
+
+    by_port = {p["idx"]: p for p in normalized["ports"]}
+    assert by_port[1]["state"] == "UP"
+    assert by_port[1]["speed_mbps"] == 1000
+    assert by_port[1]["poe"]["enabled"] is True
+    assert by_port[1]["poe"]["state"] == "UP"
+    assert by_port[2]["state"] == "DOWN"
+    assert by_port[2]["speed_mbps"] is None
+    assert by_port[2]["poe"]["state"] == "DOWN"
+
+    class CaptureClient:
+        def __init__(self):
+            self.messages = []
+        def publish(self, topic, payload, qos=0, retain=False):
+            self.messages.append((topic, payload, qos, retain))
+            return None
+        def loop_stop(self):
+            pass
+        def disconnect(self):
+            pass
+
+    fixture_pub = object.__new__(m.Publisher)
+    fixture_pub.topic_prefix = "switch_vision/unifi"
+    fixture_pub.discovery_prefix = "homeassistant"
+    fixture_pub.client = CaptureClient()
+    fixture_pub._pending = []
+    fixture_pub.publish_device(normalized)
+
+    messages = fixture_pub.client.messages
+    topics = {topic: payload for topic, payload, qos, retain in messages}
+    assert messages
+    assert all(retain is True for _, _, _, retain in messages)
+
+    base = "switch_vision/unifi/garage_switch_1"
+    assert topics[f"{base}/available"] == "online"
+    assert topics[f"{base}/model"] == "USW Lite 16 PoE"
+    assert topics[f"{base}/firmware"] == "7.4.1"
+    assert topics[f"{base}/online"] == "ON"
+    assert topics[f"{base}/cpu"] == "12.5"
+    assert topics[f"{base}/memory"] == "43.2"
+    assert topics[f"{base}/uplink_tx_rate"] == "123456"
+    assert topics[f"{base}/uplink_rx_rate"] == "654321"
+    assert topics[f"{base}/port/1/status"] == "ON"
+    assert topics[f"{base}/port/1/speed"] == "1000"
+    assert topics[f"{base}/port/1/poe_enabled"] == "ON"
+    assert topics[f"{base}/port/1/poe_active"] == "ON"
+    assert topics[f"{base}/port/2/status"] == "OFF"
+    assert f"{base}/port/2/speed" not in topics
+    assert topics[f"{base}/port/2/poe_active"] == "OFF"
+
+    discovery_topic = "homeassistant/sensor/switch_vision_unifi_garage_switch_1_model/config"
+    discovery = json.loads(topics[discovery_topic])
+    assert discovery["unique_id"] == "switch_vision_unifi_garage_switch_1_model"
+    assert discovery["state_topic"] == f"{base}/model"
+    assert discovery["availability_topic"] == f"{base}/available"
+    assert discovery["device"]["identifiers"] == ["switch_vision_unifi_garage_switch_1"]
+    assert discovery["device"]["manufacturer"] == "Ubiquiti"
+    assert discovery["device"]["model"] == "USW Lite 16 PoE"
+
+    port_discovery_topic = "homeassistant/binary_sensor/switch_vision_unifi_garage_switch_1_port_1_status/config"
+    port_discovery = json.loads(topics[port_discovery_topic])
+    assert port_discovery["state_topic"] == f"{base}/port/1/status"
+    assert port_discovery["payload_on"] == "ON"
+    assert port_discovery["payload_off"] == "OFF"
+
+    print(f"Offline fixture MQTT/Discovery messages validated: {len(messages)}")
+
     print("Switch Vision UniFi2MQTT self-test: PASS")
     return 0
 

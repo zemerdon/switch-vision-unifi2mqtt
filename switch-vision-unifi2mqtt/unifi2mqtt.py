@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.37"
+VERSION = "2.0.38"
 STOP = False
 
 

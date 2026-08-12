@@ -1,0 +1,73 @@
+{
+  "summary": {
+    "id": "garage-switch-1",
+    "name": "Garage Switch",
+    "model": "USW Lite 16 PoE",
+    "features": [
+      "switching"
+    ],
+    "state": "ONLINE",
+    "firmwareVersion": "7.4.1"
+  },
+  "detail": {
+    "id": "garage-switch-1",
+    "name": "Garage Switch",
+    "model": "USW Lite 16 PoE",
+    "state": "ONLINE",
+    "firmwareVersion": "7.4.1",
+    "interfaces": {
+      "ports": [
+        {
+          "idx": 1,
+          "state": "UP",
+          "connector": "RJ45",
+          "maxSpeedMbps": 1000,
+          "speedMbps": 1000,
+          "poe": {
+            "standard": "802.3at",
+            "type": 2,
+            "enabled": true,
+            "state": "UP"
+          }
+        },
+        {
+          "idx": 2,
+          "state": "DOWN",
+          "connector": "RJ45",
+          "maxSpeedMbps": 1000,
+          "speedMbps": 10,
+          "poe": {
+            "standard": "802.3at",
+            "type": 2,
+            "enabled": true,
+            "state": "DOWN"
+          }
+        },
+        {
+          "idx": 15,
+          "state": "UP",
+          "connector": "RJ45",
+          "maxSpeedMbps": 1000,
+          "speedMbps": 1000
+        },
+        {
+          "idx": 16,
+          "state": "UP",
+          "connector": "RJ45",
+          "maxSpeedMbps": 1000,
+          "speedMbps": 1000
+        }
+      ]
+    }
+  },
+  "stats": {
+    "uptimeSec": 987654,
+    "cpuUtilizationPct": 12.5,
+    "memoryUtilizationPct": 43.2,
+    "uplink": {
+      "txRateBps": 123456,
+      "rxRateBps": 654321
+    },
+    "interfaces": {}
+  }
+}
