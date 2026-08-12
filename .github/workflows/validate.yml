@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependency
+        run: python -m pip install --disable-pip-version-check paho-mqtt
+      - name: Python syntax
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py
+      - name: Shell syntax
+        run: sh -n switch-vision-unifi2mqtt/run.sh
+      - name: Version and repository metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('.')
+          version = (root / 'VERSION').read_text().strip()
+          cfg = (root / 'switch-vision-unifi2mqtt/config.yaml').read_text()
+          run = (root / 'switch-vision-unifi2mqtt/run.sh').read_text()
+          py = (root / 'switch-vision-unifi2mqtt/unifi2mqtt.py').read_text()
+          assert re.search(r'^version:\s*["\']?' + re.escape(version) + r'["\']?\s*$', cfg, re.M)
+          assert f'VERSION="{version}"' in run
+          assert f'VERSION = "{version}"' in py
+          assert 'https://github.com/zemerdon/switch-vision-unifi2mqtt' in cfg
+          print('metadata/version checks: PASS')
+          PY
+      - name: UniFi regression tests
+        run: python switch-vision-unifi2mqtt/self-test.py

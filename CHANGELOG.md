@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0-dev
+## v2.0.37
 
-- Initial standalone UniFi2MQTT repository.
-- Split UniFi support into an independently versioned Switch Vision component.
+- Initial standalone Switch Vision UniFi2MQTT repository baseline.
+- Read-only UniFi Network Integration API support.
+- Home Assistant MQTT Discovery and retained normalized state.
+- Normalized Switch Vision snapshot output.
+- Port link, negotiated speed, connector and PoE handling.
+- CPU, memory, uptime and uplink-rate collection.
+- Paho MQTT 1.x/2.x compatibility.
+- Transient per-device refresh preservation.
+- Offline UniFi regression/self-test suite.
