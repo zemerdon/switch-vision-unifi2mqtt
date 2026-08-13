@@ -3,7 +3,7 @@
 Switch Vision UniFi2MQTT is the optional UniFi Network API bridge used by **Switch Vision**.
 It reads adopted UniFi switching devices through the official read-only UniFi Network Integration API, normalizes switch and port state, publishes Home Assistant MQTT Discovery data, and writes a normalized snapshot for Switch Vision Discovery.
 
-> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.39.
+> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.40.
 
 ## What it does
 
