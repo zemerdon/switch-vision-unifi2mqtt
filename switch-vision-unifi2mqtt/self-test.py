@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -59,6 +60,38 @@ def main() -> int:
             assert "site_id" in str(exc) and "api_key" in str(exc)
         else:
             raise AssertionError("null required UniFi configuration was accepted")
+
+    # Supervisor-resolved MQTT environment values override legacy/default
+    # broker settings without overwriting the saved Home Assistant options.
+    with tempfile.TemporaryDirectory() as td:
+        config_path = Path(td) / "options.json"
+        config_path.write_text(json.dumps({
+            "controller_url": "https://192.168.1.1",
+            "site_id": "site",
+            "api_key": "key",
+            "mqtt_host": "core-mosquitto",
+            "mqtt_port": "1883",
+            "mqtt_username": "",
+            "mqtt_password": "",
+        }), encoding="utf-8")
+        names = ("SV_MQTT_HOST", "SV_MQTT_PORT", "SV_MQTT_USERNAME", "SV_MQTT_PASSWORD")
+        saved = {name: os.environ.get(name) for name in names}
+        try:
+            os.environ["SV_MQTT_HOST"] = "mqtt-service"
+            os.environ["SV_MQTT_PORT"] = "1884"
+            os.environ["SV_MQTT_USERNAME"] = "service-user"
+            os.environ["SV_MQTT_PASSWORD"] = "service-pass"
+            cfg = m.load_config(config_path)
+            assert cfg["mqtt_host"] == "mqtt-service"
+            assert cfg["mqtt_port"] == "1884"
+            assert cfg["mqtt_username"] == "service-user"
+            assert cfg["mqtt_password"] == "service-pass"
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
     assert m.is_switch({"features": ["switching"], "model": "anything"})
     assert m.is_switch({"features": {"switching": {}}, "model": "anything"})
@@ -153,10 +186,24 @@ def main() -> int:
     # A transient detail/statistics failure for one switch must not delete that
     # already-known switch from the normalized snapshot.
     class CapturePublisher:
+        last = None
         def __init__(self, cfg):
             self.devices = []
+            self.availability = []
+            self.cleaned = []
+            self.retired = []
+            CapturePublisher.last = self
         def publish_device(self, device):
             self.devices.append(device)
+            return set()
+        def publish_availability(self, device, status):
+            self.availability.append((device.get("id"), status))
+        def cleanup_retired_topics(self, previous, current):
+            self.cleaned.append((previous.get("id"), current.get("id")))
+            return set()
+        def remove_device(self, device):
+            self.retired.append(device.get("id"))
+            return set()
         def close(self):
             pass
 
@@ -189,6 +236,8 @@ def main() -> int:
             refreshed = json.loads(snapshot_path.read_text(encoding="utf-8"))
             kept = [d for d in refreshed["devices"] if d.get("id") == "keep"]
             assert len(kept) == 1 and kept[0] == previous_device
+            assert CapturePublisher.last is not None
+            assert ("keep", "offline") in CapturePublisher.last.availability
     finally:
         m.Publisher, m.UniFiClient = old_publisher, old_api
 
@@ -240,6 +289,9 @@ def main() -> int:
     topics = {topic: payload for topic, payload, qos, retain in messages}
     assert messages
     assert all(retain is True for _, _, _, retain in messages)
+    assert set(topics) == m.retained_topics_for_device(
+        normalized, "switch_vision/unifi", "homeassistant"
+    )
 
     base = "switch_vision/unifi/garage_switch_1"
     assert topics[f"{base}/available"] == "online"
@@ -272,6 +324,50 @@ def main() -> int:
     assert port_discovery["state_topic"] == f"{base}/port/1/status"
     assert port_discovery["payload_on"] == "ON"
     assert port_discovery["payload_off"] == "OFF"
+
+    previous = json.loads(json.dumps(normalized))
+    previous["ports"].append({
+        "idx": 99,
+        "state": "UP",
+        "connector": "RJ45",
+        "max_speed_mbps": 1000,
+        "speed_mbps": 1000,
+        "poe": {
+            "available": False,
+            "standard": None,
+            "type": None,
+            "enabled": None,
+            "state": None,
+        },
+    })
+    cleanup_pub = object.__new__(m.Publisher)
+    cleanup_pub.topic_prefix = "switch_vision/unifi"
+    cleanup_pub.discovery_prefix = "homeassistant"
+    cleanup_pub.client = CaptureClient()
+    cleanup_pub._pending = []
+    stale = cleanup_pub.cleanup_retired_topics(previous, normalized)
+    expected_stale = (
+        m.retained_topics_for_device(previous, cleanup_pub.topic_prefix, cleanup_pub.discovery_prefix)
+        - m.retained_topics_for_device(normalized, cleanup_pub.topic_prefix, cleanup_pub.discovery_prefix)
+    )
+    assert stale == expected_stale
+    assert stale
+    assert {
+        topic for topic, payload, qos, retain in cleanup_pub.client.messages if payload == "" and retain is True
+    } == expected_stale
+
+    remove_pub = object.__new__(m.Publisher)
+    remove_pub.topic_prefix = "switch_vision/unifi"
+    remove_pub.discovery_prefix = "homeassistant"
+    remove_pub.client = CaptureClient()
+    remove_pub._pending = []
+    removed = remove_pub.remove_device(normalized)
+    assert removed == m.retained_topics_for_device(
+        normalized, remove_pub.topic_prefix, remove_pub.discovery_prefix
+    )
+    assert {
+        topic for topic, payload, qos, retain in remove_pub.client.messages if payload == "" and retain is True
+    } == removed
 
     print(f"Offline fixture MQTT/Discovery messages validated: {len(messages)}")
 
