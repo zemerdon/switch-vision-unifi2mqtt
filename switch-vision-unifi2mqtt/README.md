@@ -1,4 +1,4 @@
-# Switch Vision UniFi2MQTT v2.0.39
+# Switch Vision UniFi2MQTT v2.0.40
 
 Optional read-only UniFi Network Integration API bridge for Switch Vision.
 

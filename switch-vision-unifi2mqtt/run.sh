@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 set -eu
 
-VERSION="2.0.39"
+VERSION="2.0.40"
 bashio::log.info "Switch Vision UniFi2MQTT v${VERSION} starting."
 
 mkdir -p /share/switch_vision/unifi
