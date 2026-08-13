@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import signal
 import ssl
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.38"
+VERSION = "2.0.39"
 STOP = False
 
 
@@ -48,7 +49,20 @@ def load_config(path: Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Could not read app configuration: {exc}") from exc
-    required = ["controller_url", "site_id", "api_key", "mqtt_host"]
+
+    # run.sh resolves Home Assistant's MQTT service and exports the effective
+    # broker values. Explicit custom brokers are exported unchanged.
+    env_overrides = {
+        "SV_MQTT_HOST": "mqtt_host",
+        "SV_MQTT_PORT": "mqtt_port",
+        "SV_MQTT_USERNAME": "mqtt_username",
+        "SV_MQTT_PASSWORD": "mqtt_password",
+    }
+    for env_name, key in env_overrides.items():
+        if env_name in os.environ:
+            data[key] = os.environ[env_name]
+
+    required = ["controller_url", "site_id", "api_key"]
     missing = [
         key
         for key in required
@@ -56,8 +70,10 @@ def load_config(path: Path) -> dict[str, Any]:
     ]
     if missing:
         raise RuntimeError("Missing required configuration: " + ", ".join(missing))
-    return data
 
+    if data.get("mqtt_host") is None or not str(data.get("mqtt_host", "")).strip():
+        raise RuntimeError("Missing required configuration: mqtt_host")
+    return data
 
 class UniFiClient:
     def __init__(self, base_url: str, site_id: str, api_key: str, verify_ssl: bool) -> None:
@@ -172,6 +188,59 @@ def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dic
     }
 
 
+def retained_topics_for_device(
+    d: dict[str, Any],
+    topic_prefix: str,
+    discovery_prefix: str,
+) -> set[str]:
+    # Return every retained state/discovery topic owned by a normalized device.
+    did = slug(d.get("id") or d.get("name"))
+    base = f"{topic_prefix.strip('/')}/{did}"
+    discovery_base = discovery_prefix.strip("/")
+    topics: set[str] = {f"{base}/available"}
+
+    def sensor(key: str, value: Any) -> None:
+        if value is None:
+            return
+        uid = f"switch_vision_unifi_{did}_{slug(key)}"
+        topics.add(f"{base}/{key}")
+        topics.add(f"{discovery_base}/sensor/{uid}/config")
+
+    def binary(key: str) -> None:
+        uid = f"switch_vision_unifi_{did}_{slug(key)}"
+        topics.add(f"{base}/{key}")
+        topics.add(f"{discovery_base}/binary_sensor/{uid}/config")
+
+    sensor("model", d.get("model"))
+    sensor("firmware", d.get("firmware"))
+    binary("online")
+
+    sysd = d.get("system") if isinstance(d.get("system"), dict) else {}
+    sensor("cpu", sysd.get("cpu_utilization_pct"))
+    sensor("memory", sysd.get("memory_utilization_pct"))
+    sensor("uptime", sysd.get("uptime_sec"))
+    sensor("uplink_rx_rate", sysd.get("uplink_rx_rate_bps"))
+    sensor("uplink_tx_rate", sysd.get("uplink_tx_rate_bps"))
+
+    ports = d.get("ports") if isinstance(d.get("ports"), list) else []
+    for p in ports:
+        if not isinstance(p, dict) or p.get("idx") is None:
+            continue
+        n = p["idx"]
+        prefix = f"port/{n}"
+        binary(f"{prefix}/status")
+        sensor(f"{prefix}/speed", p.get("speed_mbps"))
+        sensor(f"{prefix}/max_speed", p.get("max_speed_mbps"))
+        sensor(f"{prefix}/connector", p.get("connector"))
+        poe = p.get("poe") if isinstance(p.get("poe"), dict) else {}
+        if poe.get("available"):
+            binary(f"{prefix}/poe_enabled")
+            binary(f"{prefix}/poe_active")
+            sensor(f"{prefix}/poe_standard", poe.get("standard"))
+
+    return topics
+
+
 class Publisher:
     def __init__(self, cfg: dict[str, Any]) -> None:
         self.topic_prefix = str(cfg.get("mqtt_topic_prefix", "switch_vision/unifi")).strip("/")
@@ -190,7 +259,6 @@ class Publisher:
             self._pending.append(info)
 
     def _flush_pending(self, timeout: float = 3.0) -> None:
-        """Give the network loop a bounded chance to transmit retained messages."""
         deadline = time.monotonic() + max(0.0, timeout)
         for info in self._pending:
             is_published = getattr(info, "is_published", None)
@@ -222,7 +290,29 @@ class Publisher:
             json.dumps(payload, separators=(",", ":")),
         )
 
-    def publish_device(self, d: dict[str, Any]) -> None:
+    def publish_availability(self, d: dict[str, Any], status: str) -> None:
+        did = slug(d.get("id") or d.get("name"))
+        self.publish(f"{self.topic_prefix}/{did}/available", status)
+
+    def cleanup_retired_topics(
+        self,
+        previous: dict[str, Any],
+        current: dict[str, Any],
+    ) -> set[str]:
+        old_topics = retained_topics_for_device(previous, self.topic_prefix, self.discovery_prefix)
+        new_topics = retained_topics_for_device(current, self.topic_prefix, self.discovery_prefix)
+        stale = old_topics - new_topics
+        for topic in sorted(stale):
+            self._queue(topic, "")
+        return stale
+
+    def remove_device(self, d: dict[str, Any]) -> set[str]:
+        topics = retained_topics_for_device(d, self.topic_prefix, self.discovery_prefix)
+        for topic in sorted(topics):
+            self._queue(topic, "")
+        return topics
+
+    def publish_device(self, d: dict[str, Any]) -> set[str]:
         did = slug(d.get("id") or d.get("name"))
         base = f"{self.topic_prefix}/{did}"
         device = {
@@ -258,6 +348,7 @@ class Publisher:
         sensor("model", "Model", d["model"])
         sensor("firmware", "Firmware", d.get("firmware"))
         binary("online", "Online", d.get("state") == "ONLINE")
+
         sysd = d["system"]
         sensor("cpu", "CPU", sysd.get("cpu_utilization_pct"), "%")
         sensor("memory", "Memory", sysd.get("memory_utilization_pct"), "%")
@@ -278,6 +369,7 @@ class Publisher:
                 binary(f"{prefix}/poe_active", f"Port {n} PoE Active", poe.get("state") == "UP")
                 sensor(f"{prefix}/poe_standard", f"Port {n} PoE Standard", poe.get("standard"))
 
+        return retained_topics_for_device(d, self.topic_prefix, self.discovery_prefix)
 
 def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
     api = UniFiClient(str(cfg["controller_url"]), str(cfg["site_id"]), str(cfg["api_key"]), truthy(cfg.get("verify_ssl", True)))
@@ -299,7 +391,13 @@ def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
 
         devices = api.list_devices()
         switches = [d for d in devices if is_switch(d)]
+        switch_ids = {
+            str(d.get("id", "")).strip()
+            for d in switches
+            if str(d.get("id", "")).strip()
+        }
         logging.info("Found %d adopted devices; %d switching devices.", len(devices), len(switches))
+
         for summary in switches:
             did = str(summary.get("id", "")).strip()
             if not did:
@@ -308,14 +406,34 @@ def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
                 item = normalize_device(summary, api.detail(did), api.stats(did))
                 normalized.append(item)
                 pub.publish_device(item)
+                previous_item = previous_by_id.get(did)
+                if previous_item is not None:
+                    stale = pub.cleanup_retired_topics(previous_item, item)
+                    if stale:
+                        logging.info("%s: cleared %d retired MQTT topic(s).", item["name"], len(stale))
                 logging.info("%s (%s): %d API port(s)", item["name"], item["model"], len(item["ports"]))
             except Exception as exc:
                 previous_item = previous_by_id.get(did)
                 if previous_item is not None:
                     normalized.append(previous_item)
-                    logging.warning("Device %s refresh failed; preserving previous snapshot data: %s", summary.get("name") or did, exc)
+                    pub.publish_availability(previous_item, "offline")
+                    logging.warning(
+                        "Device %s refresh failed; preserving previous snapshot data and marking MQTT availability offline: %s",
+                        summary.get("name") or did,
+                        exc,
+                    )
                 else:
                     logging.warning("Device %s failed and has no previous snapshot data: %s", summary.get("name") or did, exc)
+
+        for did, previous_item in previous_by_id.items():
+            if did not in switch_ids:
+                removed = pub.remove_device(previous_item)
+                logging.info(
+                    "Removed stale MQTT retained data for retired device %s (%d topic(s)).",
+                    previous_item.get("name") or did,
+                    len(removed),
+                )
+
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         tmp = snapshot.with_suffix(".tmp")
         tmp.write_text(json.dumps({"schema_version": 1, "product": "Switch Vision UniFi2MQTT", "version": VERSION,
@@ -323,7 +441,6 @@ def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
         tmp.replace(snapshot)
     finally:
         pub.close()
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()

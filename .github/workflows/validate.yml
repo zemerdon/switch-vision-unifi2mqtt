@@ -17,7 +17,13 @@ jobs:
       - name: Python syntax
         run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py
       - name: Shell syntax
-        run: sh -n switch-vision-unifi2mqtt/run.sh
+        run: bash -n switch-vision-unifi2mqtt/run.sh
+      - name: Supervisor MQTT wrapper contract
+        run: |
+          grep -q 'mqtt:need' switch-vision-unifi2mqtt/config.yaml
+          grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
+          grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
+          grep -q '^exec python3 ' switch-vision-unifi2mqtt/run.sh
       - name: Version and repository metadata
         run: |
           python - <<'PY'

@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.39
+
+- Resolves the Home Assistant Supervisor MQTT service automatically for fresh/default installations.
+- Preserves explicitly configured custom MQTT brokers and migrates legacy local/default broker hosts at runtime.
+- Declares the MQTT service dependency and keeps credentials out of logs.
+- Marks previously known devices unavailable when a transient per-device refresh fails.
+- Deletes stale retained MQTT state and Home Assistant Discovery topics when ports/entities disappear.
+- Deletes retained MQTT/Discovery records for switches that are no longer returned by the UniFi API.
+- Expands offline regression coverage for MQTT service overrides and retained-entity lifecycle cleanup.
+
 ## v2.0.38
 
 - Adds a realistic offline UniFi switch fixture for hardware-free regression testing.
