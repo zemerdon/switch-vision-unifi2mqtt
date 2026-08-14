@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.0.41
+
+- Prevents a single successful empty/no-switch UniFi poll from destructively retiring every known switch; three consecutive empty switching-device polls are now required before whole-set retirement.
+- Preserves previous snapshot devices and marks them MQTT-offline during empty-set confirmation polls.
+- Validates controller URLs, site identifiers, MQTT ports/poll intervals, and MQTT topic/discovery prefixes before connecting.
+- Defaults new installations to TLS certificate verification and logs an explicit warning when verification is disabled or plaintext HTTP is used.
+- Stops including UniFi HTTP response bodies in runtime errors/logs and bounds API response size.
+- Serializes snapshot access with an owner-only lock file, rejects symlink snapshot targets, and writes snapshots atomically with verified owner-only permissions.
+- Runs with a restrictive umask and secures the UniFi shared-state directory to owner-only access.
+- Restricts GitHub Actions to read-only repository permissions and cancels superseded validation runs for the same ref.
+- Adds offline v2.0.41 hardening regressions for destructive-empty protection, validation, redaction, snapshot permissions, and source guards.
+
 ## v2.0.40
 
 - Adds the Home Assistant app-local CHANGELOG.md required by Supervisor.

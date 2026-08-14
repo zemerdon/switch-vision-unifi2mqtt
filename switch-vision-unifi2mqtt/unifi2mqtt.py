@@ -2,23 +2,28 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import logging
 import os
 import re
 import signal
 import ssl
+import stat
 import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.40"
+VERSION = "2.0.41"
 STOP = False
+EMPTY_SWITCH_CONFIRM_POLLS = 3
+MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 def handle_stop(_signum: int, _frame: Any) -> None:
@@ -28,6 +33,39 @@ def handle_stop(_signum: int, _frame: Any) -> None:
 
 def truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_control_chars(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
+def validate_controller_url(value: Any) -> str:
+    text = str(value or "").strip().rstrip("/")
+    if not text or _has_control_chars(text):
+        raise RuntimeError("controller_url is empty or contains control characters")
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        raise RuntimeError("controller_url must be an absolute http:// or https:// URL")
+    if parsed.username or parsed.password:
+        raise RuntimeError("controller_url must not contain embedded credentials")
+    if parsed.query or parsed.fragment:
+        raise RuntimeError("controller_url must not contain a query string or fragment")
+    if parsed.path not in {"", "/"}:
+        raise RuntimeError("controller_url must identify the controller origin without an extra path")
+    if parsed.scheme == "http":
+        logging.warning("UniFi controller uses plaintext HTTP; the API key is not protected in transit.")
+    return text
+
+
+def validate_topic_prefix(name: str, value: Any) -> str:
+    text = str(value or "").strip().strip("/")
+    if not text:
+        raise RuntimeError(f"{name} must not be empty")
+    if len(text) > 200 or _has_control_chars(text) or "#" in text or "+" in text:
+        raise RuntimeError(f"{name} contains an invalid MQTT topic prefix")
+    if any(not part for part in text.split("/")):
+        raise RuntimeError(f"{name} contains an empty MQTT topic level")
+    return text
 
 
 def slug(value: Any) -> str:
@@ -73,15 +111,46 @@ def load_config(path: Path) -> dict[str, Any]:
 
     if data.get("mqtt_host") is None or not str(data.get("mqtt_host", "")).strip():
         raise RuntimeError("Missing required configuration: mqtt_host")
+
+    data["controller_url"] = validate_controller_url(data["controller_url"])
+    data["site_id"] = str(data["site_id"]).strip()
+    data["api_key"] = str(data["api_key"]).strip()
+    if _has_control_chars(data["site_id"]) or len(data["site_id"]) > 256:
+        raise RuntimeError("site_id contains invalid characters or is too long")
+    if _has_control_chars(data["api_key"]) or len(data["api_key"]) > 4096:
+        raise RuntimeError("api_key contains invalid characters or is too long")
+    data["mqtt_host"] = str(data["mqtt_host"]).strip()
+    if _has_control_chars(data["mqtt_host"]):
+        raise RuntimeError("mqtt_host contains control characters")
+    try:
+        mqtt_port = int(data.get("mqtt_port", 1883))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("mqtt_port must be an integer") from exc
+    if not 1 <= mqtt_port <= 65535:
+        raise RuntimeError("mqtt_port must be between 1 and 65535")
+    try:
+        poll_interval = int(data.get("poll_interval", 30))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("poll_interval must be an integer") from exc
+    if not 10 <= poll_interval <= 300:
+        raise RuntimeError("poll_interval must be between 10 and 300 seconds")
+    data["mqtt_topic_prefix"] = validate_topic_prefix(
+        "mqtt_topic_prefix", data.get("mqtt_topic_prefix", "switch_vision/unifi")
+    )
+    data["mqtt_discovery_prefix"] = validate_topic_prefix(
+        "mqtt_discovery_prefix", data.get("mqtt_discovery_prefix", "homeassistant")
+    )
     return data
 
 class UniFiClient:
     def __init__(self, base_url: str, site_id: str, api_key: str, verify_ssl: bool) -> None:
-        self.base = base_url.rstrip("/")
+        self.base = validate_controller_url(base_url)
         self.site_id = site_id.strip()
         self.api_key = api_key.strip()
         self.context = ssl.create_default_context()
         if not verify_ssl:
+            if self.base.startswith("https://"):
+                logging.warning("UniFi TLS certificate verification is disabled by configuration.")
             self.context.check_hostname = False
             self.context.verify_mode = ssl.CERT_NONE
 
@@ -93,10 +162,17 @@ class UniFiClient:
         )
         try:
             with urlopen(req, context=self.context, timeout=15) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read(MAX_API_RESPONSE_BYTES + 1)
+                if len(raw) > MAX_API_RESPONSE_BYTES:
+                    raise RuntimeError("UniFi API response exceeded the 4 MiB safety limit")
+                try:
+                    return json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise RuntimeError("UniFi API returned invalid JSON") from exc
         except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"UniFi API HTTP {exc.code}: {body[:300]}") from exc
+            # Do not copy controller response bodies into logs; they may contain
+            # operational or credential-adjacent information.
+            raise RuntimeError(f"UniFi API HTTP {exc.code}: request failed") from exc
         except URLError as exc:
             raise RuntimeError(f"UniFi API connection failed: {exc.reason}") from exc
 
@@ -243,8 +319,12 @@ def retained_topics_for_device(
 
 class Publisher:
     def __init__(self, cfg: dict[str, Any]) -> None:
-        self.topic_prefix = str(cfg.get("mqtt_topic_prefix", "switch_vision/unifi")).strip("/")
-        self.discovery_prefix = str(cfg.get("mqtt_discovery_prefix", "homeassistant")).strip("/")
+        self.topic_prefix = validate_topic_prefix(
+            "mqtt_topic_prefix", cfg.get("mqtt_topic_prefix", "switch_vision/unifi")
+        )
+        self.discovery_prefix = validate_topic_prefix(
+            "mqtt_discovery_prefix", cfg.get("mqtt_discovery_prefix", "homeassistant")
+        )
         self.client = make_mqtt_client()
         self._pending: list[Any] = []
         user = str(cfg.get("mqtt_username", "") or "")
@@ -371,16 +451,109 @@ class Publisher:
 
         return retained_topics_for_device(d, self.topic_prefix, self.discovery_prefix)
 
-def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
+
+
+def _verify_permissions(path: Path, expected: int, label: str) -> None:
+    actual = stat.S_IMODE(path.stat().st_mode)
+    if actual != expected:
+        raise RuntimeError(
+            f"{label} permissions are {actual:04o}; expected {expected:04o}"
+        )
+
+
+def secure_directory(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"Refusing symlink state directory: {path}")
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+    _verify_permissions(path, 0o700, "UniFi state directory")
+
+
+def write_snapshot(snapshot: Path, devices: list[dict[str, Any]], empty_switch_polls: int = 0) -> None:
+    secure_directory(snapshot.parent)
+    if snapshot.is_symlink():
+        raise RuntimeError(f"Refusing symlink snapshot path: {snapshot}")
+    payload = {
+        "schema_version": 1,
+        "product": "Switch Vision UniFi2MQTT",
+        "version": VERSION,
+        "generated_at": int(time.time()),
+        "empty_switch_polls": max(0, int(empty_switch_polls)),
+        "devices": devices,
+    }
+    temp = snapshot.parent / f".{snapshot.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = None
+    try:
+        fd = os.open(temp, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            json.dump(payload, handle, indent=2)
+            handle.write(chr(10))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        _verify_permissions(temp, 0o600, "Temporary UniFi snapshot")
+        os.replace(temp, snapshot)
+        os.chmod(snapshot, 0o600)
+        _verify_permissions(snapshot, 0o600, "UniFi snapshot")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            if temp.exists():
+                temp.unlink()
+        except OSError:
+            pass
+
+
+@contextmanager
+def snapshot_operation_lock(snapshot: Path):
+    secure_directory(snapshot.parent)
+    lock_path = snapshot.parent / f".{snapshot.name}.lock"
+    if lock_path.is_symlink():
+        raise RuntimeError(f"Refusing symlink snapshot lock: {lock_path}")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        os.chmod(lock_path, 0o600)
+        _verify_permissions(lock_path, 0o600, "UniFi snapshot lock")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                "Another UniFi2MQTT process is already updating this snapshot"
+            ) from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
     api = UniFiClient(str(cfg["controller_url"]), str(cfg["site_id"]), str(cfg["api_key"]), truthy(cfg.get("verify_ssl", True)))
     pub = Publisher(cfg)
     normalized = []
     previous_by_id: dict[str, dict[str, Any]] = {}
+    previous_empty_switch_polls = 0
     try:
         if snapshot.is_file():
             try:
                 previous = json.loads(snapshot.read_text(encoding="utf-8"))
                 previous_devices = previous.get("devices", []) if isinstance(previous, dict) else []
+                if isinstance(previous, dict):
+                    try:
+                        previous_empty_switch_polls = max(
+                            0, int(previous.get("empty_switch_polls", 0))
+                        )
+                    except (TypeError, ValueError):
+                        previous_empty_switch_polls = 0
                 for item in previous_devices:
                     if isinstance(item, dict):
                         did = str(item.get("id", "")).strip()
@@ -397,6 +570,28 @@ def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
             if str(d.get("id", "")).strip()
         }
         logging.info("Found %d adopted devices; %d switching devices.", len(devices), len(switches))
+
+        empty_switch_polls = 0
+        if previous_by_id and not switch_ids:
+            empty_switch_polls = previous_empty_switch_polls + 1
+            if empty_switch_polls < EMPTY_SWITCH_CONFIRM_POLLS:
+                normalized = list(previous_by_id.values())
+                for previous_item in normalized:
+                    pub.publish_availability(previous_item, "offline")
+                logging.warning(
+                    "UniFi returned no switching devices (%d/%d confirmation polls); "
+                    "preserving %d previous device(s), marking them offline, and deferring retirement.",
+                    empty_switch_polls,
+                    EMPTY_SWITCH_CONFIRM_POLLS,
+                    len(normalized),
+                )
+                write_snapshot(snapshot, normalized, empty_switch_polls)
+                return
+            logging.warning(
+                "UniFi returned no switching devices for %d consecutive polls; "
+                "whole-set retirement is now confirmed.",
+                empty_switch_polls,
+            )
 
         for summary in switches:
             did = str(summary.get("id", "")).strip()
@@ -434,13 +629,15 @@ def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
                     len(removed),
                 )
 
-        snapshot.parent.mkdir(parents=True, exist_ok=True)
-        tmp = snapshot.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"schema_version": 1, "product": "Switch Vision UniFi2MQTT", "version": VERSION,
-                                   "generated_at": int(time.time()), "devices": normalized}, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(snapshot)
+        write_snapshot(snapshot, normalized, 0)
     finally:
         pub.close()
+
+
+def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
+    with snapshot_operation_lock(snapshot):
+        _poll_once_unlocked(cfg, snapshot)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
