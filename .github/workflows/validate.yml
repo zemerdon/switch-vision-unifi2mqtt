@@ -4,6 +4,13 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: unifi2mqtt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -15,7 +22,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Supervisor MQTT wrapper contract
@@ -46,4 +53,6 @@ jobs:
           cmp -s CHANGELOG.md switch-vision-unifi2mqtt/CHANGELOG.md
           grep -q "^## v$(cat VERSION)$" switch-vision-unifi2mqtt/CHANGELOG.md
       - name: UniFi regression tests
-        run: python switch-vision-unifi2mqtt/self-test.py
+        run: |
+          python switch-vision-unifi2mqtt/self-test.py
+          python switch-vision-unifi2mqtt/hardening-test.py

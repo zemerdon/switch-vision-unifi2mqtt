@@ -1,10 +1,12 @@
 #!/usr/bin/with-contenv bashio
 set -eu
+umask 077
 
-VERSION="2.0.40"
+VERSION="2.0.41"
 bashio::log.info "Switch Vision UniFi2MQTT v${VERSION} starting."
 
 mkdir -p /share/switch_vision/unifi
+chmod 0700 /share/switch_vision/unifi
 
 MQTT_CONFIG_HOST="$(bashio::config 'mqtt_host' 2>/dev/null || true)"
 MQTT_CONFIG_PORT="$(bashio::config 'mqtt_port' 2>/dev/null || true)"
