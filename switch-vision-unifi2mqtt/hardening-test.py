@@ -83,7 +83,7 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.44"
+    assert m.VERSION == "2.0.45"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
 
     cfg = load_cfg(m, config_payload())
@@ -155,6 +155,8 @@ def main() -> int:
         m.urlopen = old_urlopen
 
     class GuardPublisher:
+        def require_connected(self):
+            pass
         last = None
         def __init__(self, cfg):
             self.retired = []

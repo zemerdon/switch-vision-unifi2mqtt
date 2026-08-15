@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.0.45
+
+- Keeps one MQTT client/session alive for the daemon lifetime instead of reconnecting for every UniFi poll.
+- Adds retained bridge availability at `switch_vision/unifi/status` with a retained MQTT Last Will of `offline`.
+- Republishes retained bridge `online` state after initial connection and every automatic broker reconnect.
+- Adds bridge-level and per-device Home Assistant availability with `availability_mode: all`, so entities fail closed when either the bridge or device is unavailable.
+- Publishes Home Assistant Discovery and availability messages at QoS 1 while keeping normal metric/state traffic at QoS 0.
+- Checks MQTT publish return codes and uses bounded completion flushing instead of silently clearing unfinished publishes.
+- Uses Paho asynchronous connection/reconnect handling so a temporarily unavailable broker does not require restarting UniFi2MQTT.
+- Adds offline regressions for LWT configuration, reconnect availability, dual Home Assistant availability, failed publish return codes, graceful shutdown, and large publish bursts.
+- Preserves the v2.0.44 UniFi Network Integration API authentication and automatic site-resolution behavior unchanged.
+
 ## v2.0.44
 
 - Adds automatic local UniFi Network site discovery through the official Integration API site-list endpoint.
