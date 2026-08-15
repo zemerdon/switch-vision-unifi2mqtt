@@ -346,6 +346,8 @@ def main() -> int:
             self.cleaned = []
             self.retired = []
             CapturePublisher.last = self
+        def require_connected(self):
+            pass
         def publish_device(self, device):
             self.devices.append(device)
             return set()
