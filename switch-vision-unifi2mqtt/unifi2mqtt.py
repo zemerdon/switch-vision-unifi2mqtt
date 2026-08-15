@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.43"
+VERSION = "2.0.44"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -100,7 +100,7 @@ def load_config(path: Path) -> dict[str, Any]:
         if env_name in os.environ:
             data[key] = os.environ[env_name]
 
-    required = ["controller_url", "site_id", "api_key"]
+    required = ["controller_url", "api_key"]
     missing = [
         key
         for key in required
@@ -113,7 +113,7 @@ def load_config(path: Path) -> dict[str, Any]:
         raise RuntimeError("Missing required configuration: mqtt_host")
 
     data["controller_url"] = validate_controller_url(data["controller_url"])
-    data["site_id"] = str(data["site_id"]).strip()
+    data["site_id"] = str(data.get("site_id") or "auto").strip()
     data["api_key"] = str(data["api_key"]).strip()
     if _has_control_chars(data["site_id"]) or len(data["site_id"]) > 256:
         raise RuntimeError("site_id contains invalid characters or is too long")
@@ -145,7 +145,8 @@ def load_config(path: Path) -> dict[str, Any]:
 class UniFiClient:
     def __init__(self, base_url: str, site_id: str, api_key: str, verify_ssl: bool) -> None:
         self.base = validate_controller_url(base_url)
-        self.site_id = site_id.strip()
+        self.requested_site_id = site_id.strip() or "auto"
+        self.site_id = ""
         self.api_key = api_key.strip()
         self.context = ssl.create_default_context()
         if not verify_ssl:
@@ -172,27 +173,212 @@ class UniFiClient:
         except HTTPError as exc:
             # Do not copy controller response bodies into logs; they may contain
             # operational or credential-adjacent information.
-            raise RuntimeError(f"UniFi API HTTP {exc.code}: request failed") from exc
+            if exc.code in {401, 403}:
+                raise RuntimeError(
+                    f"UniFi API HTTP {exc.code}: authentication/authorization "
+                    "failed; verify a local UniFi Network Integration API key"
+                ) from exc
+            raise RuntimeError(
+                f"UniFi API HTTP {exc.code}: request failed"
+            ) from exc
         except URLError as exc:
             raise RuntimeError(f"UniFi API connection failed: {exc.reason}") from exc
 
-    def list_devices(self) -> list[dict[str, Any]]:
-        payload = self._get(f"/proxy/network/integration/v1/sites/{quote(self.site_id, safe='')}/devices")
+    def list_sites(self) -> list[dict[str, Any]]:
+        payload = self._get(
+            "/proxy/network/integration/v1/sites"
+        )
+
         if isinstance(payload, list):
-            return [x for x in payload if isinstance(x, dict)]
+            rows = payload
+        elif isinstance(payload, dict):
+            rows = None
+
+            for key in ("data", "sites"):
+                if isinstance(payload.get(key), list):
+                    rows = payload[key]
+                    break
+
+            if rows is None:
+                raise RuntimeError(
+                    "Unexpected List Local Sites response"
+                )
+        else:
+            raise RuntimeError(
+                "Unexpected List Local Sites response"
+            )
+
+        return [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and str(row.get("id") or "").strip()
+        ]
+
+    def resolve_site_id(self) -> str:
+        if self.site_id:
+            return self.site_id
+
+        sites = self.list_sites()
+
+        if not sites:
+            raise RuntimeError(
+                "UniFi Network API returned no local sites"
+            )
+
+        requested = (
+            self.requested_site_id.strip()
+            or "auto"
+        )
+
+        requested_key = requested.casefold()
+
+        def site_id(site: dict[str, Any]) -> str:
+            return str(site.get("id") or "").strip()
+
+        def matches_default(
+            site: dict[str, Any],
+        ) -> bool:
+            internal_reference = str(
+                site.get("internalReference") or ""
+            ).strip().casefold()
+
+            name = str(
+                site.get("name") or ""
+            ).strip().casefold()
+
+            return (
+                internal_reference == "default"
+                or name == "default"
+            )
+
+        selected: dict[str, Any] | None = None
+
+        if requested_key in {"auto", "default"}:
+            defaults = [
+                site
+                for site in sites
+                if matches_default(site)
+            ]
+
+            if len(defaults) == 1:
+                selected = defaults[0]
+            elif len(sites) == 1:
+                selected = sites[0]
+            else:
+                raise RuntimeError(
+                    "Multiple UniFi Network sites were returned; "
+                    "configure site_id with the required site UUID, "
+                    "internal reference, or exact site name"
+                )
+        else:
+            matches = []
+
+            for site in sites:
+                current_id = site_id(site)
+
+                internal_reference = str(
+                    site.get("internalReference") or ""
+                ).strip()
+
+                name = str(
+                    site.get("name") or ""
+                ).strip()
+
+                if (
+                    current_id == requested
+                    or internal_reference.casefold()
+                    == requested_key
+                    or name.casefold() == requested_key
+                ):
+                    matches.append(site)
+
+            if len(matches) == 1:
+                selected = matches[0]
+            elif not matches:
+                raise RuntimeError(
+                    "Configured site_id did not match any "
+                    "local UniFi Network site"
+                )
+            else:
+                raise RuntimeError(
+                    "Configured site_id matched multiple "
+                    "local UniFi Network sites"
+                )
+
+        resolved = site_id(selected)
+
+        if not resolved:
+            raise RuntimeError(
+                "Resolved UniFi Network site did not "
+                "contain a usable site ID"
+            )
+
+        self.site_id = resolved
+
+        logging.info(
+            "Resolved UniFi Network local site."
+        )
+
+        return resolved
+
+    def list_devices(self) -> list[dict[str, Any]]:
+        site_id = self.resolve_site_id()
+
+        payload = self._get(
+            "/proxy/network/integration/v1/sites/"
+            f"{quote(site_id, safe='')}/devices"
+        )
+
+        if isinstance(payload, list):
+            return [
+                x
+                for x in payload
+                if isinstance(x, dict)
+            ]
+
         if isinstance(payload, dict):
             for key in ("data", "devices"):
                 if isinstance(payload.get(key), list):
-                    return [x for x in payload[key] if isinstance(x, dict)]
-        raise RuntimeError("Unexpected List Adopted Devices response")
+                    return [
+                        x
+                        for x in payload[key]
+                        if isinstance(x, dict)
+                    ]
+
+        raise RuntimeError(
+            "Unexpected List Adopted Devices response"
+        )
 
     def detail(self, device_id: str) -> dict[str, Any]:
-        payload = self._get(f"/proxy/network/integration/v1/sites/{quote(self.site_id, safe='')}/devices/{quote(device_id, safe='')}")
-        return payload if isinstance(payload, dict) else {}
+        site_id = self.resolve_site_id()
+
+        payload = self._get(
+            "/proxy/network/integration/v1/sites/"
+            f"{quote(site_id, safe='')}/devices/"
+            f"{quote(device_id, safe='')}"
+        )
+
+        return (
+            payload
+            if isinstance(payload, dict)
+            else {}
+        )
 
     def stats(self, device_id: str) -> dict[str, Any]:
-        payload = self._get(f"/proxy/network/integration/v1/sites/{quote(self.site_id, safe='')}/devices/{quote(device_id, safe='')}/statistics/latest")
-        return payload if isinstance(payload, dict) else {}
+        site_id = self.resolve_site_id()
+
+        payload = self._get(
+            "/proxy/network/integration/v1/sites/"
+            f"{quote(site_id, safe='')}/devices/"
+            f"{quote(device_id, safe='')}/statistics/latest"
+        )
+
+        return (
+            payload
+            if isinstance(payload, dict)
+            else {}
+        )
 
 
 NON_SWITCH_MODEL_PREFIXES = (

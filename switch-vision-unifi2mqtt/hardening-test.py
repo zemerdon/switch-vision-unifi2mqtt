@@ -83,7 +83,7 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.43"
+    assert m.VERSION == "2.0.44"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
 
     cfg = load_cfg(m, config_payload())
@@ -116,6 +116,41 @@ def main() -> int:
             assert secret not in str(exc)
         else:
             raise AssertionError("HTTP error was not raised")
+    finally:
+        m.urlopen = old_urlopen
+
+    # Authentication failures must give useful guidance while still
+    # suppressing any controller response body.
+    auth_secret = "DO_NOT_LOG_AUTH_RESPONSE"
+
+    def fail_auth(*args, **kwargs):
+        raise HTTPError(
+            "https://192.0.2.1/test",
+            401,
+            "unauthorized",
+            None,
+            io.BytesIO(
+                auth_secret.encode()
+            ),
+        )
+
+    m.urlopen = fail_auth
+
+    try:
+        try:
+            client._get("/test")
+        except RuntimeError as exc:
+            message = str(exc)
+            assert "HTTP 401" in message
+            assert (
+                "Network Integration API key"
+                in message
+            )
+            assert auth_secret not in message
+        else:
+            raise AssertionError(
+                "HTTP 401 was not raised"
+            )
     finally:
         m.urlopen = old_urlopen
 
@@ -201,9 +236,10 @@ def main() -> int:
     config_text = (app_dir / "config.yaml").read_text(encoding="utf-8")
     run_text = (app_dir / "run.sh").read_text(encoding="utf-8")
     assert 'verify_ssl: "true"' in config_text
+    assert 'site_id: "auto"' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print("Switch Vision UniFi2MQTT v2.0.43 hardening regression: PASS")
+    print("Switch Vision UniFi2MQTT v2.0.44 hardening regression: PASS")
     return 0
 
 

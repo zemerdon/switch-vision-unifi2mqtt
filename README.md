@@ -3,7 +3,7 @@
 Switch Vision UniFi2MQTT is the optional UniFi Network API bridge used by **Switch Vision**.
 It reads adopted UniFi switching devices through the official read-only UniFi Network Integration API, normalizes switch and port state, publishes Home Assistant MQTT Discovery data, and writes a normalized snapshot for Switch Vision Discovery.
 
-> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.43.
+> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.44.
 
 ## What it does
 
@@ -47,8 +47,14 @@ Switch Vision Installer can manage this component as an **optional** UniFi suppo
 Required:
 
 - `controller_url`
-- `site_id`
 - `api_key`
+
+Site selection:
+
+- `site_id` defaults to `auto`.
+- UniFi2MQTT first queries the local Network API site list and resolves the actual site UUID automatically.
+- `default` is accepted as an automatic/default-site selector.
+- Multi-site installations may specify the site UUID, exact site name, or internal reference.
 
 By default, the app resolves Home Assistant's Supervisor MQTT service automatically. `mqtt_host`, MQTT credentials and other MQTT fields remain available as optional overrides for custom brokers.
 

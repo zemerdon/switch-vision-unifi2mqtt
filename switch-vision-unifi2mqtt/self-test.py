@@ -57,9 +57,20 @@ def main() -> int:
         try:
             m.load_config(config_path)
         except RuntimeError as exc:
-            assert "site_id" in str(exc) and "api_key" in str(exc)
+            assert "api_key" in str(exc)
+            assert "site_id" not in str(exc)
         else:
             raise AssertionError("null required UniFi configuration was accepted")
+
+        config_path.write_text(json.dumps({
+            "controller_url": "https://192.168.1.1",
+            "site_id": None,
+            "api_key": "key",
+            "mqtt_host": "core-mosquitto",
+        }), encoding="utf-8")
+
+        cfg = m.load_config(config_path)
+        assert cfg["site_id"] == "auto"
 
     # Supervisor-resolved MQTT environment values override legacy/default
     # broker settings without overwriting the saved Home Assistant options.
@@ -97,6 +108,130 @@ def main() -> int:
     assert m.is_switch({"features": {"switching": {}}, "model": "anything"})
     assert m.is_switch({"features": [], "model": "USW Pro 24 PoE"})
     assert not m.is_switch({"features": ["accessPoint"], "model": "U6 Pro"})
+
+
+    # v2.0.44: local Network site selection resolves through the official
+    # /integration/v1/sites endpoint before site-specific API requests.
+    paths = []
+
+    client = m.UniFiClient(
+        "https://192.0.2.1",
+        "default",
+        "fixture-key",
+        False,
+    )
+
+    def one_site_get(path):
+        paths.append(path)
+
+        if path.endswith("/sites"):
+            return {
+                "data": [
+                    {
+                        "id":
+                            "11111111-1111-1111-1111-111111111111",
+                        "internalReference": "default",
+                        "name": "Main",
+                    }
+                ]
+            }
+
+        if path.endswith("/devices"):
+            return {"data": []}
+
+        raise AssertionError(path)
+
+    client._get = one_site_get
+
+    assert client.resolve_site_id() == (
+        "11111111-1111-1111-1111-111111111111"
+    )
+
+    assert client.list_devices() == []
+
+    assert paths == [
+        "/proxy/network/integration/v1/sites",
+        (
+            "/proxy/network/integration/v1/sites/"
+            "11111111-1111-1111-1111-111111111111/"
+            "devices"
+        ),
+    ]
+
+    auto_client = m.UniFiClient(
+        "https://192.0.2.1",
+        "auto",
+        "fixture-key",
+        False,
+    )
+
+    auto_client._get = lambda path: {
+        "data": [
+            {
+                "id":
+                    "22222222-2222-2222-2222-222222222222",
+                "internalReference": "site-a",
+                "name": "Site A",
+            }
+        ]
+    }
+
+    assert auto_client.resolve_site_id() == (
+        "22222222-2222-2222-2222-222222222222"
+    )
+
+    named_client = m.UniFiClient(
+        "https://192.0.2.1",
+        "Lab",
+        "fixture-key",
+        False,
+    )
+
+    named_client._get = lambda path: {
+        "data": [
+            {
+                "id":
+                    "33333333-3333-3333-3333-333333333333",
+                "internalReference": "lab-site",
+                "name": "Lab",
+            }
+        ]
+    }
+
+    assert named_client.resolve_site_id() == (
+        "33333333-3333-3333-3333-333333333333"
+    )
+
+    ambiguous_client = m.UniFiClient(
+        "https://192.0.2.1",
+        "auto",
+        "fixture-key",
+        False,
+    )
+
+    ambiguous_client._get = lambda path: {
+        "data": [
+            {
+                "id": "site-1",
+                "internalReference": "one",
+                "name": "One",
+            },
+            {
+                "id": "site-2",
+                "internalReference": "two",
+                "name": "Two",
+            },
+        ]
+    }
+
+    try:
+        ambiguous_client.resolve_site_id()
+    except RuntimeError as exc:
+        assert "Multiple UniFi Network sites" in str(exc)
+    else:
+        raise AssertionError(
+            "ambiguous automatic site selection was accepted"
+        )
 
     # Support My Switch contribution SV-2026-000002.
     assert m.is_switch({
@@ -649,7 +784,7 @@ def main() -> int:
         m.UniFiClient = old_api
 
     print(
-        "UniFi v2.0.43 classification/"
+        "UniFi v2.0.44 classification/"
         "diagnostics regression: PASS"
     )
 
