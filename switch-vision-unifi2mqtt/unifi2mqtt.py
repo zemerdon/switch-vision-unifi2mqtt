@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.44"
+VERSION = "2.0.45"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -644,54 +644,273 @@ class Publisher:
         self.discovery_prefix = validate_topic_prefix(
             "mqtt_discovery_prefix", cfg.get("mqtt_discovery_prefix", "homeassistant")
         )
+        self.bridge_status_topic = f"{self.topic_prefix}/status"
         self.client = make_mqtt_client()
         self._pending: list[Any] = []
         user = str(cfg.get("mqtt_username", "") or "")
         if user:
-            self.client.username_pw_set(user, str(cfg.get("mqtt_password", "") or ""))
-        self.client.connect(str(cfg["mqtt_host"]), int(cfg.get("mqtt_port", 1883)), 60)
+            self.client.username_pw_set(
+                user,
+                str(cfg.get("mqtt_password", "") or ""),
+            )
+
+        self.client.will_set(
+            self.bridge_status_topic,
+            payload="offline",
+            qos=1,
+            retain=True,
+        )
+        reconnect_delay_set = getattr(
+            self.client,
+            "reconnect_delay_set",
+            None,
+        )
+        if callable(reconnect_delay_set):
+            reconnect_delay_set(
+                min_delay=1,
+                max_delay=30,
+            )
+
+        self.client.on_connect = self._on_connect
+        self.client.connect_async(
+            str(cfg["mqtt_host"]),
+            int(cfg.get("mqtt_port", 1883)),
+            60,
+        )
         self.client.loop_start()
 
-    def _queue(self, topic: str, payload: str) -> None:
-        info = self.client.publish(topic, payload, qos=0, retain=True)
+    def _bridge_topic(self) -> str:
+        return getattr(
+            self,
+            "bridge_status_topic",
+            f"{self.topic_prefix}/status",
+        )
+
+    def _on_connect(
+        self,
+        client: Any,
+        _userdata: Any,
+        _flags: Any,
+        reason_code: Any,
+        *_args: Any,
+    ) -> None:
+        try:
+            rc = int(reason_code)
+        except (TypeError, ValueError):
+            rc = 0 if reason_code == 0 else 1
+
+        if rc != 0:
+            logging.error(
+                "MQTT connection failed with reason code %s",
+                reason_code,
+            )
+            return
+
+        info = client.publish(
+            self._bridge_topic(),
+            "online",
+            qos=1,
+            retain=True,
+        )
+        success = getattr(
+            mqtt,
+            "MQTT_ERR_SUCCESS",
+            0,
+        )
+        if (
+            info is not None
+            and getattr(info, "rc", success) != success
+        ):
+            logging.error(
+                "MQTT bridge availability publish failed after connect/reconnect."
+            )
+            return
         if info is not None:
             self._pending.append(info)
 
-    def _flush_pending(self, timeout: float = 3.0) -> None:
-        deadline = time.monotonic() + max(0.0, timeout)
-        for info in self._pending:
-            is_published = getattr(info, "is_published", None)
+        logging.info(
+            "MQTT connected; bridge availability is online."
+        )
+
+    def require_connected(self) -> None:
+        is_connected = getattr(
+            self.client,
+            "is_connected",
+            None,
+        )
+        if callable(is_connected) and not is_connected():
+            raise RuntimeError(
+                "MQTT broker is not connected; waiting for automatic reconnect"
+            )
+
+    def _queue(
+        self,
+        topic: str,
+        payload: str,
+        qos: int = 0,
+    ) -> None:
+        info = self.client.publish(
+            topic,
+            payload,
+            qos=qos,
+            retain=True,
+        )
+        success = getattr(
+            mqtt,
+            "MQTT_ERR_SUCCESS",
+            0,
+        )
+        if (
+            info is not None
+            and getattr(info, "rc", success) != success
+        ):
+            raise RuntimeError(
+                f"MQTT publish rejected for {topic}: "
+                f"rc={getattr(info, 'rc', 'unknown')}"
+            )
+        if info is not None:
+            self._pending.append(info)
+
+    def _flush_pending(
+        self,
+        timeout: float = 5.0,
+    ) -> None:
+        deadline = (
+            time.monotonic()
+            + max(0.0, timeout)
+        )
+        pending = list(self._pending)
+        self._pending = []
+        unfinished: list[Any] = []
+
+        for index, info in enumerate(pending):
+            is_published = getattr(
+                info,
+                "is_published",
+                None,
+            )
             if not callable(is_published):
                 continue
+
+            published = False
             while time.monotonic() < deadline:
                 try:
                     if is_published():
+                        published = True
                         break
-                except Exception:
-                    break
+                except Exception as exc:
+                    self._pending.extend(
+                        unfinished
+                        + pending[index:]
+                    )
+                    raise RuntimeError(
+                        "MQTT publish completion check failed"
+                    ) from exc
                 time.sleep(0.01)
-        self._pending.clear()
+
+            if not published:
+                unfinished.append(info)
+
+        if unfinished:
+            self._pending.extend(unfinished)
+            raise RuntimeError(
+                "Timed out waiting for "
+                f"{len(unfinished)} MQTT publish(es) "
+                "to complete"
+            )
+
+    def flush(self) -> None:
+        self._flush_pending()
 
     def close(self) -> None:
-        try:
+        if hasattr(self, "bridge_status_topic"):
+            try:
+                self._queue(
+                    self._bridge_topic(),
+                    "offline",
+                    qos=1,
+                )
+                self._flush_pending()
+            except Exception as exc:
+                logging.warning(
+                    "Could not publish graceful MQTT "
+                    "bridge offline status: %s",
+                    exc,
+                )
+        else:
             self._flush_pending()
+
+        try:
+            self.client.disconnect()
         finally:
             self.client.loop_stop()
-            self.client.disconnect()
 
     def publish(self, topic: str, value: Any) -> None:
         if value is not None:
-            self._queue(topic, str(value))
+            qos = (
+                1
+                if (
+                    topic.endswith("/available")
+                    or topic == self._bridge_topic()
+                )
+                else 0
+            )
+            self._queue(
+                topic,
+                str(value),
+                qos=qos,
+            )
 
-    def discovery(self, component: str, uid: str, payload: dict[str, Any]) -> None:
+    def discovery(
+        self,
+        component: str,
+        uid: str,
+        payload: dict[str, Any],
+    ) -> None:
+        payload = dict(payload)
+        device_topic = payload.pop(
+            "availability_topic",
+            None,
+        )
+        payload_available = payload.pop(
+            "payload_available",
+            "online",
+        )
+        payload_not_available = payload.pop(
+            "payload_not_available",
+            "offline",
+        )
+
+        if device_topic:
+            payload["availability"] = [
+                {
+                    "topic": self._bridge_topic(),
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                },
+                {
+                    "topic": device_topic,
+                    "payload_available": payload_available,
+                    "payload_not_available": payload_not_available,
+                },
+            ]
+            payload["availability_mode"] = "all"
+
         self._queue(
             f"{self.discovery_prefix}/{component}/{uid}/config",
-            json.dumps(payload, separators=(",", ":")),
+            json.dumps(
+                payload,
+                separators=(",", ":"),
+            ),
+            qos=1,
         )
 
     def publish_availability(self, d: dict[str, Any], status: str) -> None:
         did = slug(d.get("id") or d.get("name"))
-        self.publish(f"{self.topic_prefix}/{did}/available", status)
+        self.publish(
+            f"{self.topic_prefix}/{did}/available",
+            status,
+        )
 
     def cleanup_retired_topics(
         self,
@@ -702,13 +921,24 @@ class Publisher:
         new_topics = retained_topics_for_device(current, self.topic_prefix, self.discovery_prefix)
         stale = old_topics - new_topics
         for topic in sorted(stale):
-            self._queue(topic, "")
+            self._queue(
+                topic,
+                "",
+                qos=1 if topic.endswith("/config") else 0,
+            )
         return stale
 
     def remove_device(self, d: dict[str, Any]) -> set[str]:
         topics = retained_topics_for_device(d, self.topic_prefix, self.discovery_prefix)
         for topic in sorted(topics):
-            self._queue(topic, "")
+            self._queue(
+                topic,
+                "",
+                qos=1 if (
+                    topic.endswith("/config")
+                    or topic.endswith("/available")
+                ) else 0,
+            )
         return topics
 
     def publish_device(self, d: dict[str, Any]) -> set[str]:
@@ -728,8 +958,15 @@ class Publisher:
                 return
             topic = f"{base}/{key}"
             uid = f"switch_vision_unifi_{did}_{slug(key)}"
-            payload = {"name": name, "unique_id": uid, "state_topic": topic, "device": device,
-                       "availability_topic": f"{base}/available", "payload_available": "online", "payload_not_available": "offline"}
+            payload = {
+                "name": name,
+                "unique_id": uid,
+                "state_topic": topic,
+                "device": device,
+                "availability_topic": f"{base}/available",
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
             if unit:
                 payload["unit_of_measurement"] = unit
             self.discovery("sensor", uid, payload)
@@ -738,9 +975,17 @@ class Publisher:
         def binary(key, name, on):
             topic = f"{base}/{key}"
             uid = f"switch_vision_unifi_{did}_{slug(key)}"
-            payload = {"name": name, "unique_id": uid, "state_topic": topic, "payload_on": "ON", "payload_off": "OFF",
-                       "device": device, "availability_topic": f"{base}/available",
-                       "payload_available": "online", "payload_not_available": "offline"}
+            payload = {
+                "name": name,
+                "unique_id": uid,
+                "state_topic": topic,
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device": device,
+                "availability_topic": f"{base}/available",
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
             self.discovery("binary_sensor", uid, payload)
             self.publish(topic, "ON" if on else "OFF")
 
@@ -1000,11 +1245,15 @@ def snapshot_operation_lock(snapshot: Path):
             os.close(fd)
 
 
-def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
+def _poll_once_unlocked(
+    cfg: dict[str, Any],
+    snapshot: Path,
+    pub: Publisher,
+) -> None:
     api = UniFiClient(str(cfg["controller_url"]), str(cfg["site_id"]), str(cfg["api_key"]), truthy(cfg.get("verify_ssl", True)))
 
     try:
-        pub = Publisher(cfg)
+        pub.require_connected()
     except Exception as exc:
         write_diagnostics(
             snapshot,
@@ -1150,12 +1399,28 @@ def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
             empty_switch_polls=0,
         )
     finally:
-        pub.close()
+        flush = getattr(pub, "flush", None)
+        if callable(flush):
+            flush()
 
 
-def poll_once(cfg: dict[str, Any], snapshot: Path) -> None:
-    with snapshot_operation_lock(snapshot):
-        _poll_once_unlocked(cfg, snapshot)
+def poll_once(
+    cfg: dict[str, Any],
+    snapshot: Path,
+    pub: Publisher | None = None,
+) -> None:
+    owns_publisher = pub is None
+    current_pub = pub if pub is not None else Publisher(cfg)
+    try:
+        with snapshot_operation_lock(snapshot):
+            _poll_once_unlocked(
+                cfg,
+                snapshot,
+                current_pub,
+            )
+    finally:
+        if owns_publisher:
+            current_pub.close()
 
 
 def main() -> int:
@@ -1184,15 +1449,64 @@ def main() -> int:
             )
         return 2
     interval = max(10, min(300, int(cfg.get("poll_interval", 30))))
-    while not STOP:
-        started = time.monotonic()
+
+    try:
+        pub = Publisher(cfg)
+    except Exception as exc:
+        logging.error("MQTT initialization failed: %s", exc)
         try:
-            poll_once(cfg, args.snapshot)
-        except Exception as exc:
-            logging.error("Poll failed: %s", exc)
-        deadline = time.monotonic() + max(1.0, interval - (time.monotonic() - started))
-        while not STOP and time.monotonic() < deadline:
-            time.sleep(min(0.5, deadline - time.monotonic()))
+            write_diagnostics(
+                args.snapshot,
+                status="error",
+                stage="mqtt_connect",
+                error_type=type(exc).__name__,
+            )
+        except Exception:
+            logging.warning(
+                "Could not persist UniFi MQTT diagnostics."
+            )
+        return 2
+
+    try:
+        while not STOP:
+            started = time.monotonic()
+            try:
+                poll_once(
+                    cfg,
+                    args.snapshot,
+                    pub,
+                )
+            except Exception as exc:
+                logging.error(
+                    "Poll failed: %s",
+                    exc,
+                )
+            deadline = (
+                time.monotonic()
+                + max(
+                    1.0,
+                    interval
+                    - (
+                        time.monotonic()
+                        - started
+                    ),
+                )
+            )
+            while (
+                not STOP
+                and time.monotonic()
+                < deadline
+            ):
+                time.sleep(
+                    min(
+                        0.5,
+                        deadline
+                        - time.monotonic(),
+                    )
+                )
+    finally:
+        pub.close()
+
     logging.info("Stopped.")
     return 0
 

@@ -467,7 +467,19 @@ def main() -> int:
     discovery = json.loads(topics[discovery_topic])
     assert discovery["unique_id"] == "switch_vision_unifi_garage_switch_1_model"
     assert discovery["state_topic"] == f"{base}/model"
-    assert discovery["availability_topic"] == f"{base}/available"
+    assert discovery["availability_mode"] == "all"
+    assert discovery["availability"] == [
+        {
+            "topic": "switch_vision/unifi/status",
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        },
+        {
+            "topic": f"{base}/available",
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        },
+    ]
     assert discovery["device"]["identifiers"] == ["switch_vision_unifi_garage_switch_1"]
     assert discovery["device"]["manufacturer"] == "Ubiquiti"
     assert discovery["device"]["model"] == "USW Lite 16 PoE"
@@ -784,7 +796,7 @@ def main() -> int:
         m.UniFiClient = old_api
 
     print(
-        "UniFi v2.0.44 classification/"
+        "UniFi v2.0.45 classification/"
         "diagnostics regression: PASS"
     )
 

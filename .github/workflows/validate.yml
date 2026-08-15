@@ -22,7 +22,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Supervisor MQTT wrapper contract
@@ -56,3 +56,4 @@ jobs:
         run: |
           python switch-vision-unifi2mqtt/self-test.py
           python switch-vision-unifi2mqtt/hardening-test.py
+          python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
