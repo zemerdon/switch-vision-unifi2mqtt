@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.42"
+VERSION = "2.0.43"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -207,25 +207,134 @@ NON_SWITCH_MODEL_PREFIXES = (
     "POWER BACKUP",
 )
 
+KNOWN_GATEWAY_SWITCH_MODELS = {
+    "UDM PRO",
+    "UDM SE",
+    "UDM PRO SE",
+}
 
-def is_switch(device: dict[str, Any]) -> bool:
-    model = str(device.get("model", "") or "").strip().upper()
 
-    if model.startswith(NON_SWITCH_MODEL_PREFIXES):
-        return False
+def canonical_unifi_model(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    return re.sub(r"[^A-Z0-9]+", " ", text).strip()
+
+
+def switch_classification(
+    device: dict[str, Any],
+) -> tuple[bool, str]:
+    model = str(
+        device.get("model", "") or ""
+    ).strip().upper()
+
+    if model.startswith(
+        NON_SWITCH_MODEL_PREFIXES
+    ):
+        return False, "managed_power_device"
+
+    model_key = canonical_unifi_model(model)
+
+    if model_key in KNOWN_GATEWAY_SWITCH_MODELS:
+        return True, "known_gateway_switch_hybrid"
+
+    if model.startswith(
+        ("USW ", "USW-", "US ", "US-")
+    ):
+        return True, "unifi_switch_model"
 
     features = device.get("features")
 
     if isinstance(features, list) and features:
-        return "switching" in {str(x).lower() for x in features}
+        names = {
+            str(x).strip().lower()
+            for x in features
+        }
+        if "switching" in names:
+            return True, "switching_feature"
+        return False, "no_switching_feature"
 
     if isinstance(features, dict) and features:
         if "switching" not in features:
-            return False
-        switching = features.get("switching")
-        return switching is not None and switching is not False
+            return False, "no_switching_feature"
 
-    return model.startswith(("USW ", "USW-", "US ", "US-"))
+        switching = features.get("switching")
+
+        if (
+            switching is not None
+            and switching is not False
+        ):
+            return True, "switching_feature"
+
+        return False, "switching_feature_disabled"
+
+    return False, "unsupported_model"
+
+
+def is_switch(device: dict[str, Any]) -> bool:
+    accepted, _reason = switch_classification(
+        device
+    )
+    return accepted
+
+
+def diagnostic_feature_names(
+    device: dict[str, Any],
+) -> list[str]:
+    features = device.get("features")
+
+    if isinstance(features, list):
+        values = features
+    elif isinstance(features, dict):
+        values = list(features)
+    else:
+        values = []
+
+    safe: set[str] = set()
+
+    for value in values:
+        text = str(value or "").strip()
+
+        if (
+            text
+            and len(text) <= 64
+            and re.fullmatch(
+                r"[A-Za-z0-9_.:+-]+",
+                text,
+            )
+        ):
+            safe.add(text)
+
+    return sorted(
+        safe,
+        key=str.casefold,
+    )
+
+
+def diagnostic_device_classification(
+    device: dict[str, Any],
+) -> dict[str, Any]:
+    model = str(
+        device.get("model", "") or "Unknown"
+    ).strip()
+
+    if (
+        not model
+        or len(model) > 128
+        or _has_control_chars(model)
+    ):
+        model = "Unknown"
+
+    accepted, reason = switch_classification(
+        device
+    )
+
+    return {
+        "model": model,
+        "features": diagnostic_feature_names(
+            device
+        ),
+        "accepted": accepted,
+        "reason": reason,
+    }
 
 
 def extract_ports(detail: dict[str, Any]) -> list[dict[str, Any]]:
@@ -533,6 +642,151 @@ def write_snapshot(snapshot: Path, devices: list[dict[str, Any]], empty_switch_p
             pass
 
 
+def diagnostics_path_for_snapshot(
+    snapshot: Path,
+) -> Path:
+    return snapshot.parent / "diagnostics.json"
+
+
+def write_diagnostics(
+    snapshot: Path,
+    *,
+    status: str,
+    stage: str,
+    devices: list[dict[str, Any]] | None = None,
+    empty_switch_polls: int = 0,
+    error_type: str | None = None,
+) -> None:
+    path = diagnostics_path_for_snapshot(
+        snapshot
+    )
+
+    secure_directory(path.parent)
+
+    if path.is_symlink():
+        raise RuntimeError(
+            "Refusing symlink diagnostics path: "
+            f"{path}"
+        )
+
+    source_devices = (
+        devices
+        if isinstance(devices, list)
+        else []
+    )
+
+    classifications = [
+        diagnostic_device_classification(d)
+        for d in source_devices
+        if isinstance(d, dict)
+    ]
+
+    accepted = sum(
+        1
+        for item in classifications
+        if item["accepted"]
+    )
+
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "product":
+            "Switch Vision UniFi2MQTT",
+        "version": VERSION,
+        "generated_at": int(time.time()),
+        "status": str(status),
+        "stage": str(stage),
+        "adopted_devices":
+            len(classifications),
+        "switching_devices":
+            accepted,
+        "rejected_devices":
+            len(classifications) - accepted,
+        "empty_switch_polls":
+            max(
+                0,
+                int(empty_switch_polls),
+            ),
+        "device_classification":
+            classifications,
+    }
+
+    if error_type:
+        payload["error_type"] = str(
+            error_type
+        )[:128]
+
+    temp = path.parent / (
+        f".{path.name}.{os.getpid()}."
+        f"{time.monotonic_ns()}.tmp"
+    )
+
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+    )
+
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    fd = None
+
+    try:
+        fd = os.open(
+            temp,
+            flags,
+            0o600,
+        )
+
+        with os.fdopen(
+            fd,
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            fd = None
+            json.dump(
+                payload,
+                handle,
+                indent=2,
+            )
+            handle.write(chr(10))
+            handle.flush()
+            os.fsync(
+                handle.fileno()
+            )
+
+        os.chmod(temp, 0o600)
+
+        _verify_permissions(
+            temp,
+            0o600,
+            "Temporary UniFi diagnostics",
+        )
+
+        os.replace(
+            temp,
+            path,
+        )
+
+        os.chmod(path, 0o600)
+
+        _verify_permissions(
+            path,
+            0o600,
+            "UniFi diagnostics",
+        )
+
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+        try:
+            if temp.exists():
+                temp.unlink()
+        except OSError:
+            pass
+
+
 @contextmanager
 def snapshot_operation_lock(snapshot: Path):
     secure_directory(snapshot.parent)
@@ -562,7 +816,18 @@ def snapshot_operation_lock(snapshot: Path):
 
 def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
     api = UniFiClient(str(cfg["controller_url"]), str(cfg["site_id"]), str(cfg["api_key"]), truthy(cfg.get("verify_ssl", True)))
-    pub = Publisher(cfg)
+
+    try:
+        pub = Publisher(cfg)
+    except Exception as exc:
+        write_diagnostics(
+            snapshot,
+            status="error",
+            stage="mqtt_connect",
+            error_type=type(exc).__name__,
+        )
+        raise
+
     normalized = []
     previous_by_id: dict[str, dict[str, Any]] = {}
     previous_empty_switch_polls = 0
@@ -586,8 +851,29 @@ def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 logging.warning("Existing UniFi snapshot could not be read; continuing with a fresh snapshot.")
 
-        devices = api.list_devices()
-        switches = [d for d in devices if is_switch(d)]
+        try:
+            devices = api.list_devices()
+        except Exception as exc:
+            write_diagnostics(
+                snapshot,
+                status="error",
+                stage="list_devices",
+                error_type=type(exc).__name__,
+            )
+            raise
+
+        switches = [
+            d
+            for d in devices
+            if is_switch(d)
+        ]
+
+        write_diagnostics(
+            snapshot,
+            status="in_progress",
+            stage="devices_classified",
+            devices=devices,
+        )
         switch_ids = {
             str(d.get("id", "")).strip()
             for d in switches
@@ -609,7 +895,19 @@ def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
                     EMPTY_SWITCH_CONFIRM_POLLS,
                     len(normalized),
                 )
-                write_snapshot(snapshot, normalized, empty_switch_polls)
+                write_snapshot(
+                    snapshot,
+                    normalized,
+                    empty_switch_polls,
+                )
+                write_diagnostics(
+                    snapshot,
+                    status="success",
+                    stage="complete",
+                    devices=devices,
+                    empty_switch_polls=
+                        empty_switch_polls,
+                )
                 return
             logging.warning(
                 "UniFi returned no switching devices for %d consecutive polls; "
@@ -653,7 +951,18 @@ def _poll_once_unlocked(cfg: dict[str, Any], snapshot: Path) -> None:
                     len(removed),
                 )
 
-        write_snapshot(snapshot, normalized, 0)
+        write_snapshot(
+            snapshot,
+            normalized,
+            0,
+        )
+        write_diagnostics(
+            snapshot,
+            status="success",
+            stage="complete",
+            devices=devices,
+            empty_switch_polls=0,
+        )
     finally:
         pub.close()
 
@@ -675,6 +984,18 @@ def main() -> int:
         cfg = load_config(args.config)
     except Exception as exc:
         logging.error("%s", exc)
+        try:
+            write_diagnostics(
+                args.snapshot,
+                status="error",
+                stage="configuration",
+                error_type=type(exc).__name__,
+            )
+        except Exception:
+            logging.warning(
+                "Could not persist UniFi "
+                "configuration diagnostics."
+            )
         return 2
     interval = max(10, min(300, int(cfg.get("poll_interval", 30))))
     while not STOP:

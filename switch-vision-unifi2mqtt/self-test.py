@@ -387,6 +387,272 @@ def main() -> int:
         topic for topic, payload, qos, retain in remove_pub.client.messages if payload == "" and retain is True
     } == removed
 
+    # v2.0.43 tolerant UniFi switch classification.
+    cases = [
+        (
+            {
+                "model": "UDM SE",
+                "features": [],
+            },
+            True,
+            "known_gateway_switch_hybrid",
+        ),
+        (
+            {
+                "model": "UDM-Pro-SE",
+                "features": ["routing"],
+            },
+            True,
+            "known_gateway_switch_hybrid",
+        ),
+        (
+            {
+                "model": "USW 24 Pro",
+                "features": ["accessPoint"],
+            },
+            True,
+            "unifi_switch_model",
+        ),
+        (
+            {
+                "model": "USW 8",
+                "features": [],
+            },
+            True,
+            "unifi_switch_model",
+        ),
+        (
+            {
+                "model": "USW 24 POE",
+                "features": ["somethingElse"],
+            },
+            True,
+            "unifi_switch_model",
+        ),
+        (
+            {
+                "model": "UPS 2U",
+                "features": ["switching"],
+            },
+            False,
+            "managed_power_device",
+        ),
+        (
+            {
+                "model": "PDU Pro",
+                "features": {"switching": {}},
+            },
+            False,
+            "managed_power_device",
+        ),
+    ]
+
+    for device, expected, reason in cases:
+        actual, actual_reason = (
+            m.switch_classification(device)
+        )
+        assert actual is expected, (
+            device,
+            actual,
+            expected,
+        )
+        assert actual_reason == reason, (
+            device,
+            actual_reason,
+            reason,
+        )
+        assert m.is_switch(device) is expected
+
+    # Diagnostics must retain hardware/classification
+    # evidence without identifiers, names, addresses,
+    # credentials, or other user-specific fields.
+    with tempfile.TemporaryDirectory() as td:
+        snapshot_path = (
+            Path(td) / "devices.json"
+        )
+
+        diagnostic_devices = [
+            {
+                "id": "PRIVATE-DEVICE-ID",
+                "name": "PRIVATE-DEVICE-NAME",
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "ip": "192.0.2.123",
+                "serial": "PRIVATE-SERIAL",
+                "model": "UDM SE",
+                "features": [
+                    "routing",
+                    "switching",
+                ],
+            },
+            {
+                "id": "PRIVATE-SWITCH-ID",
+                "name": "PRIVATE-SWITCH-NAME",
+                "model": "USW 24 Pro",
+                "features": [
+                    "switching",
+                ],
+            },
+            {
+                "id": "PRIVATE-UPS-ID",
+                "name": "PRIVATE-UPS-NAME",
+                "model": "UPS 2U",
+                "features": [
+                    "switching",
+                ],
+            },
+        ]
+
+        m.write_diagnostics(
+            snapshot_path,
+            status="success",
+            stage="complete",
+            devices=diagnostic_devices,
+        )
+
+        diagnostics_path = (
+            Path(td) / "diagnostics.json"
+        )
+
+        assert diagnostics_path.is_file()
+        assert (
+            os.stat(diagnostics_path).st_mode
+            & 0o777
+        ) == 0o600
+
+        diagnostics = json.loads(
+            diagnostics_path.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        assert diagnostics["status"] == "success"
+        assert diagnostics["stage"] == "complete"
+        assert diagnostics["adopted_devices"] == 3
+        assert diagnostics["switching_devices"] == 2
+        assert diagnostics["rejected_devices"] == 1
+
+        rows = diagnostics[
+            "device_classification"
+        ]
+
+        assert [
+            row["model"]
+            for row in rows
+        ] == [
+            "UDM SE",
+            "USW 24 Pro",
+            "UPS 2U",
+        ]
+
+        assert rows[0]["accepted"] is True
+        assert rows[1]["accepted"] is True
+        assert rows[2]["accepted"] is False
+
+        raw = diagnostics_path.read_text(
+            encoding="utf-8"
+        )
+
+        forbidden = (
+            "PRIVATE-DEVICE-ID",
+            "PRIVATE-DEVICE-NAME",
+            "PRIVATE-SWITCH-ID",
+            "PRIVATE-SWITCH-NAME",
+            "PRIVATE-UPS-ID",
+            "PRIVATE-UPS-NAME",
+            "PRIVATE-SERIAL",
+            "aa:bb:cc:dd:ee:ff",
+            "192.0.2.123",
+        )
+
+        for value in forbidden:
+            assert value not in raw, value
+
+    # A List Adopted Devices failure must leave
+    # persistent privacy-safe diagnostics instead
+    # of only the snapshot lock file.
+    class FailingListApi:
+        def __init__(
+            self,
+            *args,
+            **kwargs,
+        ):
+            pass
+
+        def list_devices(self):
+            raise RuntimeError(
+                "synthetic API failure"
+            )
+
+    old_publisher = m.Publisher
+    old_api = m.UniFiClient
+
+    try:
+        m.Publisher = CapturePublisher
+        m.UniFiClient = FailingListApi
+
+        with tempfile.TemporaryDirectory() as td:
+            snapshot_path = (
+                Path(td) / "devices.json"
+            )
+
+            try:
+                m.poll_once(
+                    {
+                        "controller_url":
+                            "https://controller",
+                        "site_id": "site",
+                        "api_key": "key",
+                        "verify_ssl": "false",
+                    },
+                    snapshot_path,
+                )
+            except RuntimeError as exc:
+                assert (
+                    "synthetic API failure"
+                    in str(exc)
+                )
+            else:
+                raise AssertionError(
+                    "API failure was not raised"
+                )
+
+            diagnostics = json.loads(
+                (
+                    Path(td)
+                    / "diagnostics.json"
+                ).read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            assert (
+                diagnostics["status"]
+                == "error"
+            )
+            assert (
+                diagnostics["stage"]
+                == "list_devices"
+            )
+            assert (
+                diagnostics["error_type"]
+                == "RuntimeError"
+            )
+            assert (
+                diagnostics[
+                    "adopted_devices"
+                ]
+                == 0
+            )
+
+    finally:
+        m.Publisher = old_publisher
+        m.UniFiClient = old_api
+
+    print(
+        "UniFi v2.0.43 classification/"
+        "diagnostics regression: PASS"
+    )
+
     print(f"Offline fixture MQTT/Discovery messages validated: {len(messages)}")
 
     print("Switch Vision UniFi2MQTT self-test: PASS")
