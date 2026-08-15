@@ -1,4 +1,4 @@
-# Switch Vision UniFi2MQTT v2.0.41
+# Switch Vision UniFi2MQTT v2.0.42
 
 Optional read-only UniFi Network Integration API bridge for Switch Vision.
 
@@ -18,6 +18,6 @@ A normalized snapshot is written to:
 /share/switch_vision/unifi/devices.json
 ```
 
-The bridge is intentionally separate from SNMP2MQTT. Per-port traffic is only exposed when the API actually supplies it; Switch Vision does not synthesize port traffic from aggregate uplink rates.
+The bridge is intentionally separate from SNMP2MQTT. Per-port traffic is only exposed when the API actually supplies it; Switch Vision does not synthesize port traffic from aggregate uplink rates. **SNMP is required for Switch Vision per-port Activity LED animation when the UniFi API does not expose per-port RX/TX traffic.**
 
 Required UniFi settings are `controller_url`, `site_id` and `api_key`. Home Assistant's Supervisor MQTT service is used automatically unless a custom `mqtt_host` is configured. The API key is sent only in the `X-API-KEY` request header. New installations verify controller TLS certificates by default. A single empty switching-device response no longer retires all devices; whole-set retirement requires three consecutive empty polls. No write/action endpoints are used.

@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.0.42
+
+- Excludes UniFi managed power hardware such as UPS, PDU, USP, RPS and Power Backup devices from the Switch Vision switch inventory even when switching-adjacent capabilities are exposed.
+- Treats null or false `features.switching` values as not-a-switch.
+- Adds legacy `US ...` switch-name fallback handling when feature data is absent.
+- Adds regression coverage from Support My Switch contribution `SV-2026-000002`, confirming `US 48 PoE 500W` remains a switch while `UPS 2U` is rejected.
+- Adds `US 48 PoE 500W` to the live-tested UniFi evidence list.
+- Documents that SNMP is required for per-port Activity LED animation when UniFi does not expose per-port RX/TX traffic.
+
 ## v2.0.41
 
 - Prevents a single successful empty/no-switch UniFi poll from destructively retiring every known switch; three consecutive empty switching-device polls are now required before whole-set retirement.
