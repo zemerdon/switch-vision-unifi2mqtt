@@ -83,7 +83,7 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.42"
+    assert m.VERSION == "2.0.43"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
 
     cfg = load_cfg(m, config_payload())
@@ -203,7 +203,7 @@ def main() -> int:
     assert 'verify_ssl: "true"' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print("Switch Vision UniFi2MQTT v2.0.42 hardening regression: PASS")
+    print("Switch Vision UniFi2MQTT v2.0.43 hardening regression: PASS")
     return 0
 
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.43
+
+- Adds privacy-safe persistent UniFi polling diagnostics at `/share/switch_vision/unifi/diagnostics.json`.
+- Records poll status/stage, adopted-device count, accepted/rejected switch counts, safe hardware model names, safe feature names, and classification reasons without storing device IDs, names, MAC addresses, IP addresses, serial numbers, credentials, or API keys.
+- Persists diagnostic evidence when configuration, MQTT connection, or UniFi List Adopted Devices polling fails, avoiding contribution bundles that contain only a snapshot lock file.
+- Adds tolerant switch-family detection for `USW ...` and `US ...` hardware even when feature metadata is incomplete or misleading.
+- Adds explicit gateway/switch-hybrid recognition for UDM Pro, UDM SE, and UDM Pro SE model forms.
+- Preserves hard exclusions for UPS, PDU, USP, RPS, and Power Backup managed-power hardware.
+- Adds regression coverage for UDM SE, USW 24 Pro, USW 8, USW 24 POE, managed-power rejection, diagnostic privacy, and persistent API-failure diagnostics.
+- Preserves the existing three-consecutive-empty-poll retirement protection and normalized MQTT/device snapshot behavior.
+
 ## v2.0.42
 
 - Excludes UniFi managed power hardware such as UPS, PDU, USP, RPS and Power Backup devices from the Switch Vision switch inventory even when switching-adjacent capabilities are exposed.

@@ -1,4 +1,4 @@
-# Switch Vision UniFi2MQTT v2.0.42
+# Switch Vision UniFi2MQTT v2.0.43
 
 Optional read-only UniFi Network Integration API bridge for Switch Vision.
 
@@ -17,6 +17,8 @@ A normalized snapshot is written to:
 ```text
 /share/switch_vision/unifi/devices.json
 ```
+
+Privacy-safe polling diagnostics are written to /share/switch_vision/unifi/diagnostics.json. They retain polling status and safe hardware classification evidence without storing API keys, credentials, device IDs, device names, MAC addresses, IP addresses, or serial numbers.
 
 The bridge is intentionally separate from SNMP2MQTT. Per-port traffic is only exposed when the API actually supplies it; Switch Vision does not synthesize port traffic from aggregate uplink rates. **SNMP is required for Switch Vision per-port Activity LED animation when the UniFi API does not expose per-port RX/TX traffic.**
 
