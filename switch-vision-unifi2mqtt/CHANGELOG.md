@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.0.44
+
+- Adds automatic local UniFi Network site discovery through the official Integration API site-list endpoint.
+- Changes `site_id` from a required first-run value to an automatic selector that defaults to `auto`.
+- Accepts `auto` or `default` for automatic/default-site resolution.
+- Allows multi-site installations to select a site by UUID, exact site name, or internal reference.
+- Resolves the real site UUID before adopted-device, detail, and statistics requests.
+- Adds clearer HTTP 401/403 guidance for incorrect or unauthorized API keys while continuing to suppress controller response bodies.
+- Adds regression coverage for automatic single-site resolution, default-site resolution, named-site resolution, ambiguous multi-site rejection, and authentication-error redaction.
+- Preserves v2.0.43 device classification, privacy-safe diagnostics, managed-power exclusions, and three-empty-poll retirement protection.
+
 ## v2.0.43
 
 - Adds privacy-safe persistent UniFi polling diagnostics at `/share/switch_vision/unifi/diagnostics.json`.

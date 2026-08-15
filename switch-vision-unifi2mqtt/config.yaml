@@ -1,5 +1,5 @@
 name: Switch Vision UniFi2MQTT
-version: "2.0.43"
+version: "2.0.44"
 slug: switch_vision_unifi2mqtt
 description: Read-only UniFi Network Integration API bridge to MQTT for Switch Vision.
 url: https://github.com/zemerdon/switch-vision-unifi2mqtt
@@ -15,7 +15,7 @@ services:
   - mqtt:need
 options:
   controller_url: "https://192.168.1.1"
-  site_id: null
+  site_id: "auto"
   api_key: null
   verify_ssl: "true"
   poll_interval: "30"
