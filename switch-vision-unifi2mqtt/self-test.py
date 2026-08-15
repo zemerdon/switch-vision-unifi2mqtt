@@ -98,6 +98,24 @@ def main() -> int:
     assert m.is_switch({"features": [], "model": "USW Pro 24 PoE"})
     assert not m.is_switch({"features": ["accessPoint"], "model": "U6 Pro"})
 
+    # Support My Switch contribution SV-2026-000002.
+    assert m.is_switch({
+        "features": ["switching"],
+        "model": "US 48 PoE 500W",
+    })
+    assert m.is_switch({
+        "features": [],
+        "model": "US 48 PoE 500W",
+    })
+    assert not m.is_switch({
+        "features": ["switching"],
+        "model": "UPS 2U",
+    })
+    assert not m.is_switch({
+        "features": {"switching": {}},
+        "model": "UPS 2U",
+    })
+
     detail = {
         "id": "device-1", "name": "Lab Switch", "model": "USW Enterprise 8 PoE",
         "state": "ONLINE", "firmwareVersion": "7.4.1",

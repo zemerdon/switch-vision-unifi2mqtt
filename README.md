@@ -3,7 +3,7 @@
 Switch Vision UniFi2MQTT is the optional UniFi Network API bridge used by **Switch Vision**.
 It reads adopted UniFi switching devices through the official read-only UniFi Network Integration API, normalizes switch and port state, publishes Home Assistant MQTT Discovery data, and writes a normalized snapshot for Switch Vision Discovery.
 
-> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.41.
+> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.42.
 
 ## What it does
 
@@ -26,6 +26,7 @@ Current Switch Vision evidence includes:
 - USW Pro 24 PoE
 - USW Enterprise 8 PoE
 - USW Pro XG 8 PoE
+- US 48 PoE 500W
 - UDM Pro gateway/switch hybrid
 
 Support remains contribution-driven and model validation status is maintained by the main Switch Vision device registry.
@@ -62,7 +63,13 @@ Normalized data is written to:
 /share/switch_vision/unifi/devices.json
 ```
 
-The current UniFi API provides reliable link, negotiated speed, connector, PoE and system/uplink information. Per-port traffic is not fabricated when the API does not expose it; SNMP can still be used where per-port RX/TX counters are required.
+The current UniFi API provides reliable link, negotiated speed, connector, PoE and system/uplink information. Per-port traffic is not fabricated when the API does not expose it.
+
+## Activity LEDs
+
+Switch Vision per-port Activity LEDs require per-port RX/TX traffic data. The UniFi Network API does not currently provide reliable per-port traffic data across supported UniFi hardware, so **SNMP is required for per-port Activity LED animation**.
+
+UniFi-only installations still provide supported port link state, negotiated speed, connector, PoE and system telemetry.
 
 ## Validation
 

@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.41"
+VERSION = "2.0.42"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -195,13 +195,37 @@ class UniFiClient:
         return payload if isinstance(payload, dict) else {}
 
 
+NON_SWITCH_MODEL_PREFIXES = (
+    "UPS ",
+    "UPS-",
+    "PDU ",
+    "PDU-",
+    "USP ",
+    "USP-",
+    "RPS ",
+    "RPS-",
+    "POWER BACKUP",
+)
+
+
 def is_switch(device: dict[str, Any]) -> bool:
+    model = str(device.get("model", "") or "").strip().upper()
+
+    if model.startswith(NON_SWITCH_MODEL_PREFIXES):
+        return False
+
     features = device.get("features")
+
     if isinstance(features, list) and features:
         return "switching" in {str(x).lower() for x in features}
+
     if isinstance(features, dict) and features:
-        return "switching" in features
-    return str(device.get("model", "")).upper().startswith(("USW ", "USW-"))
+        if "switching" not in features:
+            return False
+        switching = features.get("switching")
+        return switching is not None and switching is not False
+
+    return model.startswith(("USW ", "USW-", "US ", "US-"))
 
 
 def extract_ports(detail: dict[str, Any]) -> list[dict[str, Any]]:
