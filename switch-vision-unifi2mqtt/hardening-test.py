@@ -155,6 +155,8 @@ def main() -> int:
         m.urlopen = old_urlopen
 
     class GuardPublisher:
+        def require_connected(self):
+            pass
         last = None
         def __init__(self, cfg):
             self.retired = []
