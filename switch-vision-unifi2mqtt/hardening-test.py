@@ -46,11 +46,15 @@ def config_payload(**updates):
         "site_id": "default",
         "api_key": "fixture-key",
         "verify_ssl": "true",
+        "allow_insecure_http": "false",
         "poll_interval": "30",
         "mqtt_host": "mqtt.local",
         "mqtt_port": "1883",
         "mqtt_username": "",
         "mqtt_password": "",
+        "mqtt_tls": "false",
+        "mqtt_verify_ssl": "true",
+        "mqtt_ca": "",
         "mqtt_topic_prefix": "switch_vision/unifi",
         "mqtt_discovery_prefix": "homeassistant",
     }
@@ -83,7 +87,7 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.45"
+    assert m.VERSION == "2.0.46"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
 
     cfg = load_cfg(m, config_payload())
@@ -93,11 +97,41 @@ def main() -> int:
     assert cfg["mqtt_topic_prefix"] == "switch_vision/unifi"
 
     expect_config_failure(m, config_payload(controller_url="ftp://192.0.2.1"), "absolute http:// or https://")
+    expect_config_failure(
+        m,
+        config_payload(controller_url="http://192.0.2.1"),
+        "allow_insecure_http",
+    )
+    http_cfg = load_cfg(
+        m,
+        config_payload(
+            controller_url="http://192.0.2.1",
+            allow_insecure_http="true",
+        ),
+    )
+    assert http_cfg["controller_url"] == "http://192.0.2.1"
+    assert http_cfg["allow_insecure_http"] is True
     expect_config_failure(m, config_payload(controller_url="https://user:pass@192.0.2.1"), "embedded credentials")
     expect_config_failure(m, config_payload(controller_url="https://192.0.2.1/path"), "without an extra path")
     expect_config_failure(m, config_payload(mqtt_topic_prefix="switch_vision/#"), "invalid MQTT topic prefix")
     expect_config_failure(m, config_payload(mqtt_discovery_prefix="homeassistant/+"), "invalid MQTT topic prefix")
     expect_config_failure(m, config_payload(mqtt_port="70000"), "between 1 and 65535")
+
+    cfg_tls = load_cfg(
+        m,
+        config_payload(
+            mqtt_tls="true",
+            mqtt_verify_ssl="false",
+        ),
+    )
+    assert cfg_tls["mqtt_tls"] is True
+    assert cfg_tls["mqtt_verify_ssl"] is False
+    assert cfg_tls["mqtt_ca"] == ""
+
+    source = Path(__file__).with_name("unifi2mqtt.py").read_text(encoding="utf-8")
+    assert "self.client.tls_set(" in source
+    assert "self.client.tls_insecure_set(True)" in source
+    assert "ssl.CERT_REQUIRED if verify_mqtt_tls else ssl.CERT_NONE" in source
 
     # Controller response bodies must never be copied into raised/loggable errors.
     client = m.UniFiClient("https://192.0.2.1", "default", "fixture-key", False)
@@ -241,7 +275,7 @@ def main() -> int:
     assert 'site_id: "auto"' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print("Switch Vision UniFi2MQTT v2.0.44 hardening regression: PASS")
+    print("Switch Vision UniFi2MQTT v2.0.46 hardening regression: PASS")
     return 0
 
 

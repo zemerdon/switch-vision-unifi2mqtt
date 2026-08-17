@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Offline MQTT lifecycle regression for Switch Vision UniFi2MQTT v2.0.45.
+# Offline MQTT lifecycle regression for Switch Vision UniFi2MQTT v2.0.46.
 from __future__ import annotations
 
 import importlib.util
@@ -228,7 +228,7 @@ def main():
     assert fake.loop_stopped is True
 
     print(
-        "UniFi2MQTT v2.0.45 MQTT lifecycle regression: PASS"
+        "UniFi2MQTT v2.0.46 MQTT lifecycle regression: PASS"
     )
     return 0
 

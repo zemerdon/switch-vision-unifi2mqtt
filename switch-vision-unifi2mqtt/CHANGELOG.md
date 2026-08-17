@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.0.46
+
+- Add optional TLS for explicitly configured/custom MQTT brokers while preserving the normal Home Assistant Supervisor MQTT path.
+- Add optional `/ssl` CA-file support through a read-only Home Assistant SSL mapping.
+- Keep MQTT certificate verification enabled by default; disabling verification requires an explicit option and logs a warning.
+- Require an explicit `allow_insecure_http: true` opt-in before a plaintext UniFi controller URL is accepted.
+- Preserve HTTPS controller defaults, persistent MQTT/LWT behaviour, site resolution, snapshot privacy, device classification, and Discovery contracts unchanged.
+- Extend hardening coverage for plaintext-controller opt-in and MQTT TLS configuration.
+
 ## v2.0.45
 
 - Keeps one MQTT client/session alive for the daemon lifetime instead of reconnecting for every UniFi poll.

@@ -1,5 +1,5 @@
 name: Switch Vision UniFi2MQTT
-version: "2.0.45"
+version: "2.0.46"
 slug: switch_vision_unifi2mqtt
 description: Read-only UniFi Network Integration API bridge to MQTT for Switch Vision.
 url: https://github.com/zemerdon/switch-vision-unifi2mqtt
@@ -11,6 +11,7 @@ boot: auto
 init: false
 map:
   - share:rw
+  - ssl:ro
 services:
   - mqtt:need
 options:
@@ -18,11 +19,15 @@ options:
   site_id: "auto"
   api_key: null
   verify_ssl: "true"
+  allow_insecure_http: "false"
   poll_interval: "30"
   mqtt_host: ""
   mqtt_port: "1883"
   mqtt_username: ""
   mqtt_password: ""
+  mqtt_tls: "false"
+  mqtt_verify_ssl: "true"
+  mqtt_ca: ""
   mqtt_topic_prefix: "switch_vision/unifi"
   mqtt_discovery_prefix: "homeassistant"
 schema:
@@ -30,10 +35,14 @@ schema:
   site_id: str
   api_key: password
   verify_ssl: list(false|true)
+  allow_insecure_http: list(false|true)
   poll_interval: int(10,300)
   mqtt_host: str?
   mqtt_port: port
   mqtt_username: str?
   mqtt_password: password?
+  mqtt_tls: list(false|true)
+  mqtt_verify_ssl: list(false|true)
+  mqtt_ca: str?
   mqtt_topic_prefix: str
   mqtt_discovery_prefix: str
