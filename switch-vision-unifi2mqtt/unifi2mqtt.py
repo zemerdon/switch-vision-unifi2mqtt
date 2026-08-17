@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.45"
+VERSION = "2.0.46"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -39,7 +39,7 @@ def _has_control_chars(value: str) -> bool:
     return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
 
 
-def validate_controller_url(value: Any) -> str:
+def validate_controller_url(value: Any, allow_insecure_http: bool = False) -> str:
     text = str(value or "").strip().rstrip("/")
     if not text or _has_control_chars(text):
         raise RuntimeError("controller_url is empty or contains control characters")
@@ -53,7 +53,15 @@ def validate_controller_url(value: Any) -> str:
     if parsed.path not in {"", "/"}:
         raise RuntimeError("controller_url must identify the controller origin without an extra path")
     if parsed.scheme == "http":
-        logging.warning("UniFi controller uses plaintext HTTP; the API key is not protected in transit.")
+        if not allow_insecure_http:
+            raise RuntimeError(
+                "controller_url uses plaintext HTTP; set allow_insecure_http to true "
+                "only when this risk is explicitly accepted"
+            )
+        logging.warning(
+            "UniFi controller uses plaintext HTTP by explicit opt-in; "
+            "the API key is not protected in transit."
+        )
     return text
 
 
@@ -112,7 +120,11 @@ def load_config(path: Path) -> dict[str, Any]:
     if data.get("mqtt_host") is None or not str(data.get("mqtt_host", "")).strip():
         raise RuntimeError("Missing required configuration: mqtt_host")
 
-    data["controller_url"] = validate_controller_url(data["controller_url"])
+    data["allow_insecure_http"] = truthy(data.get("allow_insecure_http", False))
+    data["controller_url"] = validate_controller_url(
+        data["controller_url"],
+        data["allow_insecure_http"],
+    )
     data["site_id"] = str(data.get("site_id") or "auto").strip()
     data["api_key"] = str(data["api_key"]).strip()
     if _has_control_chars(data["site_id"]) or len(data["site_id"]) > 256:
@@ -128,6 +140,27 @@ def load_config(path: Path) -> dict[str, Any]:
         raise RuntimeError("mqtt_port must be an integer") from exc
     if not 1 <= mqtt_port <= 65535:
         raise RuntimeError("mqtt_port must be between 1 and 65535")
+
+    data["mqtt_tls"] = truthy(data.get("mqtt_tls", False))
+    data["mqtt_verify_ssl"] = truthy(data.get("mqtt_verify_ssl", True))
+    mqtt_ca = str(data.get("mqtt_ca", "") or "").strip()
+    if _has_control_chars(mqtt_ca):
+        raise RuntimeError("mqtt_ca contains control characters")
+    if mqtt_ca:
+        ca_path = Path(mqtt_ca)
+        try:
+            resolved_ca = ca_path.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError(f"mqtt_ca could not be resolved: {exc}") from exc
+        ssl_root = Path("/ssl").resolve()
+        if resolved_ca == ssl_root or ssl_root not in resolved_ca.parents:
+            raise RuntimeError("mqtt_ca must reference a file below /ssl")
+        if not resolved_ca.is_file():
+            raise RuntimeError("mqtt_ca must reference a regular file")
+        data["mqtt_ca"] = str(resolved_ca)
+    else:
+        data["mqtt_ca"] = ""
+
     try:
         poll_interval = int(data.get("poll_interval", 30))
     except (TypeError, ValueError) as exc:
@@ -143,8 +176,15 @@ def load_config(path: Path) -> dict[str, Any]:
     return data
 
 class UniFiClient:
-    def __init__(self, base_url: str, site_id: str, api_key: str, verify_ssl: bool) -> None:
-        self.base = validate_controller_url(base_url)
+    def __init__(
+        self,
+        base_url: str,
+        site_id: str,
+        api_key: str,
+        verify_ssl: bool,
+        allow_insecure_http: bool = False,
+    ) -> None:
+        self.base = validate_controller_url(base_url, allow_insecure_http)
         self.requested_site_id = site_id.strip() or "auto"
         self.site_id = ""
         self.api_key = api_key.strip()
@@ -653,6 +693,19 @@ class Publisher:
                 user,
                 str(cfg.get("mqtt_password", "") or ""),
             )
+
+        if truthy(cfg.get("mqtt_tls", False)):
+            ca_certs = str(cfg.get("mqtt_ca", "") or "").strip() or None
+            verify_mqtt_tls = truthy(cfg.get("mqtt_verify_ssl", True))
+            self.client.tls_set(
+                ca_certs=ca_certs,
+                cert_reqs=ssl.CERT_REQUIRED if verify_mqtt_tls else ssl.CERT_NONE,
+            )
+            if not verify_mqtt_tls:
+                self.client.tls_insecure_set(True)
+                logging.warning(
+                    "MQTT TLS certificate verification is disabled by configuration."
+                )
 
         self.client.will_set(
             self.bridge_status_topic,
@@ -1250,7 +1303,13 @@ def _poll_once_unlocked(
     snapshot: Path,
     pub: Publisher,
 ) -> None:
-    api = UniFiClient(str(cfg["controller_url"]), str(cfg["site_id"]), str(cfg["api_key"]), truthy(cfg.get("verify_ssl", True)))
+    api = UniFiClient(
+        str(cfg["controller_url"]),
+        str(cfg["site_id"]),
+        str(cfg["api_key"]),
+        truthy(cfg.get("verify_ssl", True)),
+        truthy(cfg.get("allow_insecure_http", False)),
+    )
 
     try:
         pub.require_connected()
