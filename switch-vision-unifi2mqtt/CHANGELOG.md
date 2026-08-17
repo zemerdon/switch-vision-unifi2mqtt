@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.47
+
+- Pin the UniFi2MQTT Home Assistant `base:3.22` container to its resolved immutable multi-architecture OCI digest.
+- Preserve amd64 and arm64 platform selection through the pinned OCI image index.
+- Prevent future UniFi2MQTT rebuilds from silently consuming a different `base:3.22` image without an explicit source change.
+- Preserve UniFi API authentication and site resolution, MQTT lifecycle and Last Will behavior, TLS/HTTP transport controls, snapshots, diagnostics, Home Assistant discovery, and device classification unchanged.
+
 ## v2.0.46
 
 - Add optional TLS for explicitly configured/custom MQTT brokers while preserving the normal Home Assistant Supervisor MQTT path.

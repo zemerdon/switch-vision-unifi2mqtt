@@ -1,4 +1,4 @@
-FROM ghcr.io/home-assistant/base:3.22
+FROM ghcr.io/home-assistant/base:3.22@sha256:8f937e0b89e108f432d3cb140900f06e568f8f4fbdb7987472447f54d8b24495
 
 ARG BUILD_VERSION
 ARG BUILD_ARCH
