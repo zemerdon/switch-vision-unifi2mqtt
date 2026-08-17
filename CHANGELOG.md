@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.0.46 — Transport security hardening
+## v2.0.46
 
 - Add optional TLS for explicitly configured/custom MQTT brokers while preserving the normal Home Assistant Supervisor MQTT path.
 - Add optional `/ssl` CA-file support through a read-only Home Assistant SSL mapping.
