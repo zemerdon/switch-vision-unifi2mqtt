@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.47
+## v2.0.47
 
 - Pin the UniFi2MQTT Home Assistant `base:3.22` container to its resolved immutable multi-architecture OCI digest.
 - Preserve amd64 and arm64 platform selection through the pinned OCI image index.
