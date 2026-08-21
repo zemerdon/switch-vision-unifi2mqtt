@@ -3,7 +3,7 @@
 Switch Vision UniFi2MQTT is the optional UniFi Network API bridge used by **Switch Vision**.
 It reads adopted UniFi switching devices through the official read-only UniFi Network Integration API, normalizes switch and port state, publishes Home Assistant MQTT Discovery data, and writes a normalized snapshot for Switch Vision Discovery.
 
-> **Status:** Experimental hardware-support component. Current standalone release line: v2.0.44.
+> **Status:** Experimental hardware-support component. The authoritative release version is defined by `VERSION` and `switch-vision-unifi2mqtt/config.yaml`.
 
 ## What it does
 
@@ -86,7 +86,7 @@ Run the offline regression test with:
 python3 switch-vision-unifi2mqtt/self-test.py
 ```
 
-The GitHub Actions validation workflow also checks Python syntax, shell syntax, configuration/version consistency and the UniFi regression suite.
+The permanent GitHub Actions validation workflow checks Python and shell syntax, Supervisor MQTT wrapper behaviour, release/configuration consistency, the UniFi self-test, hardening and MQTT-lifecycle regressions, and real amd64/arm64 container builds.
 
 ## Related projects
 
