@@ -104,9 +104,18 @@ def main() -> int:
                 else:
                     os.environ[name] = value
 
-    assert m.is_switch({"features": ["switching"], "model": "anything"})
-    assert m.is_switch({"features": {"switching": {}}, "model": "anything"})
+    # SV-2026-000009: switching feature alone is not switch identity.
+    assert not m.is_switch({"features": ["switching"], "model": "AirWire"})
+    assert not m.is_switch({"features": {"switching": {}}, "model": "AirWire"})
+    assert not m.is_switch({"features": ["switching"], "model": "anything"})
     assert m.is_switch({"features": [], "model": "USW Pro 24 PoE"})
+    assert m.is_switch({"features": [], "model": "UCG Ultra"})
+    assert m.is_switch({"features": [], "model": "UCG Fiber"})
+    # SV-2026-000011: UDM Pro Max is a legitimate gateway/switch hybrid.
+    assert m.is_switch({"features": ["switching"], "model": "UDM Pro Max"})
+    assert m.switch_classification({"features": ["switching"], "model": "UDM Pro Max"}) == (
+        True, "known_gateway_switch_hybrid"
+    )
     assert not m.is_switch({"features": ["accessPoint"], "model": "U6 Pro"})
 
 
