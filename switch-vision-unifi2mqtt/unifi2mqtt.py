@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.47"
+VERSION = "2.0.48"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -437,6 +437,8 @@ KNOWN_GATEWAY_SWITCH_MODELS = {
     "UDM PRO",
     "UDM SE",
     "UDM PRO SE",
+    "UCG ULTRA",
+    "UCG FIBER",
 }
 
 
@@ -475,7 +477,7 @@ def switch_classification(
             for x in features
         }
         if "switching" in names:
-            return True, "switching_feature"
+            return False, "switching_feature_untrusted"
         return False, "no_switching_feature"
 
     if isinstance(features, dict) and features:
@@ -488,7 +490,7 @@ def switch_classification(
             switching is not None
             and switching is not False
         ):
-            return True, "switching_feature"
+            return False, "switching_feature_untrusted"
 
         return False, "switching_feature_disabled"
 

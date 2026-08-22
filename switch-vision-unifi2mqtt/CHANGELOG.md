@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.48 — UniFi device-classification hardening
+
+- Rejects devices that only advertise the UniFi API `switching` feature without belonging to a recognised switch or gateway/switch-hybrid model family.
+- Prevents Ubiquiti AirWire from being misclassified as a Switch Vision switch (SV-2026-000009).
+- Explicitly preserves UCG Ultra and UCG Fiber as gateway/switch hybrids while retaining existing UDM Pro-family handling.
+- Adds permanent regressions for AirWire rejection and UCG Ultra/UCG Fiber acceptance.
+
 ## v2.0.47
 
 - Pin the UniFi2MQTT Home Assistant `base:3.22` container to its resolved immutable multi-architecture OCI digest.
