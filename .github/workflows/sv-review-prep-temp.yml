@@ -1,0 +1,67 @@
+name: Temporary SV review preparer
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sv-review-prep-temp.yml']
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: review/inbox-audit-unifi2mqtt-2.0.48
+      - name: Prepare UniFi2MQTT 2.0.48 review branch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app = Path('switch-vision-unifi2mqtt/unifi2mqtt.py')
+          s = app.read_text()
+          assert 'VERSION = "2.0.47"' in s
+          s = s.replace('VERSION = "2.0.47"', 'VERSION = "2.0.48"', 1)
+          needle = '    "UDM PRO SE",\n}'
+          assert needle in s
+          s = s.replace(needle, '    "UDM PRO SE",\n    "UCG ULTRA",\n    "UCG FIBER",\n}', 1)
+          assert s.count('return True, "switching_feature"') == 2
+          s = s.replace('return True, "switching_feature"', 'return False, "switching_feature_untrusted"')
+          app.write_text(s)
+
+          test = Path('switch-vision-unifi2mqtt/self-test.py')
+          t = test.read_text()
+          assert 'assert m.is_switch({"features": ["switching"], "model": "anything"})' in t
+          assert 'assert m.is_switch({"features": {"switching": {}}, "model": "anything"})' in t
+          t = t.replace(
+              '    assert m.is_switch({"features": ["switching"], "model": "anything"})\n'
+              '    assert m.is_switch({"features": {"switching": {}}, "model": "anything"})\n'
+              '    assert m.is_switch({"features": [], "model": "USW Pro 24 PoE"})\n',
+              '    # SV-2026-000009: switching feature alone is not switch identity.\n'
+              '    assert not m.is_switch({"features": ["switching"], "model": "AirWire"})\n'
+              '    assert not m.is_switch({"features": {"switching": {}}, "model": "AirWire"})\n'
+              '    assert not m.is_switch({"features": ["switching"], "model": "anything"})\n'
+              '    assert m.is_switch({"features": [], "model": "USW Pro 24 PoE"})\n'
+              '    assert m.is_switch({"features": [], "model": "UCG Ultra"})\n'
+              '    assert m.is_switch({"features": [], "model": "UCG Fiber"})\n', 1)
+          test.write_text(t)
+
+          Path('VERSION').write_text('2.0.48\n')
+          cfg = Path('switch-vision-unifi2mqtt/config.yaml')
+          c = cfg.read_text(); assert 'version: "2.0.47"' in c
+          cfg.write_text(c.replace('version: "2.0.47"', 'version: "2.0.48"', 1))
+
+          entry = '''## 2.0.48 — UniFi device-classification hardening\n\n- Rejects devices that only advertise the UniFi API `switching` feature without belonging to a recognised switch or gateway/switch-hybrid model family.\n- Prevents Ubiquiti AirWire from being misclassified as a Switch Vision switch (SV-2026-000009).\n- Explicitly preserves UCG Ultra and UCG Fiber as gateway/switch hybrids while retaining existing UDM Pro-family handling.\n- Adds permanent regressions for AirWire rejection and UCG Ultra/UCG Fiber acceptance.\n\n'''
+          for name in ('CHANGELOG.md', 'switch-vision-unifi2mqtt/CHANGELOG.md'):
+              p=Path(name); x=p.read_text(); marker='# Changelog\n\n'; assert marker in x
+              p.write_text(x.replace(marker, marker+entry, 1))
+
+          dead = Path('.github/workflows/sv-inbox-audit-prep.yml')
+          if dead.exists(): dead.unlink()
+          PY
+          python switch-vision-unifi2mqtt/self-test.py
+          git config user.name 'Switch Vision Review Builder'
+          git config user.email 'switch-vision@users.noreply.github.com'
+          git add -A
+          git commit -m '[sv-inbox-prepared] UniFi2MQTT 2.0.48: harden device classification'
+          git push origin HEAD:review/inbox-audit-unifi2mqtt-2.0.48
