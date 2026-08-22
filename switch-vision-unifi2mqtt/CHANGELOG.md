@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.48 — UniFi device-classification hardening
+## v2.0.48
 
 - Rejects devices that only advertise the UniFi API `switching` feature without belonging to a recognised switch or gateway/switch-hybrid model family.
 - Prevents Ubiquiti AirWire from being misclassified as a Switch Vision switch (SV-2026-000009).
