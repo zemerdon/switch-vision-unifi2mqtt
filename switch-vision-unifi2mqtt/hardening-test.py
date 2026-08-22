@@ -89,6 +89,8 @@ def main() -> int:
     m = load_module()
     assert m.VERSION == "2.0.48"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
+    assert not m.is_switch({"features": ["switching"], "model": "AirWire"})
+    assert m.is_switch({"features": ["switching"], "model": "UDM Pro Max"})
 
     cfg = load_cfg(m, config_payload())
     assert cfg["controller_url"] == "https://192.0.2.1"
@@ -272,7 +274,7 @@ def main() -> int:
     assert 'site_id: "auto"' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print("Switch Vision UniFi2MQTT v2.0.46 hardening regression: PASS")
+    print("Switch Vision UniFi2MQTT v2.0.48 hardening regression: PASS")
     return 0
 
 

@@ -4,8 +4,8 @@
 
 - Rejects devices that only advertise the UniFi API `switching` feature without belonging to a recognised switch or gateway/switch-hybrid model family.
 - Prevents Ubiquiti AirWire from being misclassified as a Switch Vision switch (SV-2026-000009).
-- Explicitly preserves UCG Ultra and UCG Fiber as gateway/switch hybrids while retaining existing UDM Pro-family handling.
-- Adds permanent regressions for AirWire rejection and UCG Ultra/UCG Fiber acceptance.
+- Explicitly preserves UCG Ultra, UCG Fiber, and UDM Pro Max as gateway/switch hybrids while retaining existing UDM Pro-family handling.
+- Adds permanent regressions for AirWire rejection and UCG Ultra/UCG Fiber/UDM Pro Max acceptance.
 
 ## v2.0.47
 
