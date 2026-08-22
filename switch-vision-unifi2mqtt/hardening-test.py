@@ -87,7 +87,7 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.47"
+    assert m.VERSION == "2.0.48"
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
 
     cfg = load_cfg(m, config_payload())
@@ -133,7 +133,6 @@ def main() -> int:
     assert "self.client.tls_insecure_set(True)" in source
     assert "ssl.CERT_REQUIRED if verify_mqtt_tls else ssl.CERT_NONE" in source
 
-    # Controller response bodies must never be copied into raised/loggable errors.
     client = m.UniFiClient("https://192.0.2.1", "default", "fixture-key", False)
     old_urlopen = m.urlopen
     secret = "DO_NOT_LOG_THIS_BODY_SECRET"
@@ -153,8 +152,6 @@ def main() -> int:
     finally:
         m.urlopen = old_urlopen
 
-    # Authentication failures must give useful guidance while still
-    # suppressing any controller response body.
     auth_secret = "DO_NOT_LOG_AUTH_RESPONSE"
 
     def fail_auth(*args, **kwargs):
