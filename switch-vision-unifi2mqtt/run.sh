@@ -2,7 +2,7 @@
 set -eu
 umask 077
 
-VERSION="2.0.49"
+VERSION="2.0.50"
 bashio::log.info "Switch Vision UniFi2MQTT v${VERSION} starting."
 
 mkdir -p /share/switch_vision/unifi
@@ -57,4 +57,13 @@ fi
 export SV_MQTT_HOST SV_MQTT_PORT SV_MQTT_USERNAME SV_MQTT_PASSWORD
 
 bashio::log.info "MQTT broker host: ${SV_MQTT_HOST}"
+
+if python3 /classic_port_probe.py \
+  --config /data/options.json \
+  --output /share/switch_vision/unifi/classic_port_traffic_probe.json; then
+  bashio::log.info "UniFi per-port traffic capability probe completed."
+else
+  bashio::log.warning "UniFi per-port traffic capability probe could not write diagnostics; continuing normally."
+fi
+
 exec python3 /unifi2mqtt.py --config /data/options.json --snapshot /share/switch_vision/unifi/devices.json

@@ -24,7 +24,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Supervisor MQTT wrapper contract
@@ -33,6 +33,13 @@ jobs:
           grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
           grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
           grep -q '^exec python3 ' switch-vision-unifi2mqtt/run.sh
+      - name: Classic port-stat probe packaging contract
+        run: |
+          grep -q 'COPY classic_port_probe.py /classic_port_probe.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q '/classic_port_probe.py' switch-vision-unifi2mqtt/run.sh
+          grep -q 'classic_port_traffic_probe.json' switch-vision-unifi2mqtt/run.sh
+          grep -q 'raw_controller_payload_stored.*False' switch-vision-unifi2mqtt/classic_port_probe.py
+          grep -q 'private_identifiers_included.*False' switch-vision-unifi2mqtt/classic_port_probe.py
       - name: Version and repository metadata
         run: |
           python - <<'PY'
@@ -43,9 +50,11 @@ jobs:
           cfg = (root / 'switch-vision-unifi2mqtt/config.yaml').read_text()
           run = (root / 'switch-vision-unifi2mqtt/run.sh').read_text()
           py = (root / 'switch-vision-unifi2mqtt/unifi2mqtt.py').read_text()
+          probe = (root / 'switch-vision-unifi2mqtt/classic_port_probe.py').read_text()
           assert re.search(r'^version:\s*["\']?' + re.escape(version) + r'["\']?\s*$', cfg, re.M)
           assert f'VERSION="{version}"' in run
           assert f'VERSION = "{version}"' in py
+          assert f'VERSION = "{version}"' in probe
           assert 'https://github.com/zemerdon/switch-vision-unifi2mqtt' in cfg
           print('metadata/version checks: PASS')
           PY
@@ -59,6 +68,7 @@ jobs:
           python switch-vision-unifi2mqtt/self-test.py
           python switch-vision-unifi2mqtt/hardening-test.py
           python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+          python switch-vision-unifi2mqtt/classic-port-probe-test.py
 
   container-build:
     name: Container build / ${{ matrix.arch }}
