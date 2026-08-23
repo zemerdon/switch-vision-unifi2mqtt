@@ -262,7 +262,7 @@ def main() -> int:
 
     detail = {
         "id": "device-1", "name": "Lab Switch", "model": "USW Enterprise 8 PoE",
-        "state": "ONLINE", "firmwareVersion": "7.4.1",
+        "state": "ONLINE", "firmwareVersion": "7.4.1", "ipAddress": "192.0.2.10",
         "interfaces": {"ports": [
             {"idx": 1, "state": "UP", "connector": "RJ45", "maxSpeedMbps": 2500, "speedMbps": 1000,
              "poe": {"standard": "802.3at", "type": 2, "enabled": True, "state": "UP"}},
@@ -273,6 +273,7 @@ def main() -> int:
              "uplink": {"txRateBps": 100, "rxRateBps": 200}, "interfaces": {}}
     n = m.normalize_device(detail, detail, stats)
     assert n["model"] == "USW Enterprise 8 PoE"
+    assert n["ip_address"] == "192.0.2.10"
     assert len(n["ports"]) == 2
     assert n["ports"][0]["connector"] == "RJ45"
     assert n["ports"][0]["poe"]["standard"] == "802.3at"

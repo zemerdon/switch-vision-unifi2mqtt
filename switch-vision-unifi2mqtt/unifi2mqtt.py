@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "2.0.48"
+VERSION = "2.0.49"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -610,6 +610,7 @@ def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dic
         "name": str(source.get("name") or source.get("model") or "UniFi Switch"),
         "model": str(source.get("model", "Unknown")),
         "firmware": str(source.get("firmwareVersion", "")),
+        "ip_address": str(source.get("ipAddress") or ""),
         "state": str(source.get("state", "UNKNOWN")).upper(),
         "ports": ports,
         "system": {
