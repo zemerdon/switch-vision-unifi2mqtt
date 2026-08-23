@@ -58,7 +58,8 @@
           "speedMbps": 1000
         }
       ]
-    }
+    },
+    "ipAddress": "192.0.2.10"
   },
   "stats": {
     "uptimeSec": 987654,

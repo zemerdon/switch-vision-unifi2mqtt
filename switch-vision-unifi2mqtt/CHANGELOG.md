@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.49
+
+- Preserve the official UniFi Network Integration API `ipAddress` value in the normalized Switch Vision snapshot as `ip_address`.
+- Make the live management IP available to Switch Vision Core without requiring a manually configured `switch_ip` or `management_ip`.
+- Keep privacy-safe diagnostics unchanged: management IPs remain excluded from `diagnostics.json` and are only present in the existing owner-only normalized device snapshot.
+- Preserve the current API capability boundary: no per-port RX/TX traffic, VLAN, description, temperature, or other unavailable telemetry is synthesized.
+- Add fixture and normalization regression coverage for management-IP preservation.
+
 ## v2.0.48
 
 - Rejects devices that only advertise the UniFi API `switching` feature without belonging to a recognised switch or gateway/switch-hybrid model family.
