@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.50
+
+- Add a one-shot, read-only capability probe for the local UniFi Network classic `stat/device` endpoint to discover whether real per-port traffic counters are available.
+- Reuse the existing local Integration API key and resolved site metadata; classic-endpoint authentication or availability failures remain non-fatal and normal UniFi2MQTT polling continues unchanged.
+- Write only privacy-safe capability evidence to `/share/switch_vision/unifi/classic_port_traffic_probe.json`: hardware model, port counts, and presence counts for approved RX/TX counter fields. Raw controller payloads, names, MACs, IPs, serials, VLANs, descriptions, credentials, and API keys are never stored by the probe.
+- Keep MQTT topics, Home Assistant entities, normalized device snapshots, Core activity behavior, and `per_port_traffic` capability unchanged in this release. This release collects evidence only; it does not synthesize or publish per-port traffic.
+- Add permanent offline regressions for site resolution, counter detection, no-counter behavior, privacy redaction, secure output permissions, packaging, and both supported container architectures.
+
 ## v2.0.49
 
 - Preserve the official UniFi Network Integration API `ipAddress` value in the normalized Switch Vision snapshot as `ip_address`.
