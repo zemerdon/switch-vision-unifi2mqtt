@@ -113,7 +113,7 @@ jobs:
           ref: feature/unifi2mqtt-2.0.50-classic-port-probe
           fetch-depth: 0
           persist-credentials: true
-      - name: Finalize 2.0.50 metadata and remove preparer
+      - name: Finalize 2.0.50 product metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -147,23 +147,12 @@ jobs:
                       raise SystemExit(f'Unexpected changelog heading: {path}')
                   current = heading + entry + current[len(heading):]
                   path.write_text(current, encoding='utf-8', newline='\n')
-
-          workflow = Path('.github/workflows/validate.yml')
-          current = workflow.read_text(encoding='utf-8')
-          start = '# TEMP 2.0.50 PREPARER START'
-          end = '# TEMP 2.0.50 PREPARER END'
-          if start not in current or end not in current:
-              raise SystemExit('Temporary preparer markers are missing')
-          before, rest = current.split(start, 1)
-          _discard, after = rest.split(end, 1)
-          cleaned = before.rstrip() + '\n' + after.lstrip('\n')
-          workflow.write_text(cleaned, encoding='utf-8', newline='\n')
           PY
 
           git diff --check
           git config user.name 'switch-vision-ci'
           git config user.email 'switch-vision-ci@users.noreply.github.com'
-          git add .github/workflows/validate.yml CHANGELOG.md switch-vision-unifi2mqtt/CHANGELOG.md switch-vision-unifi2mqtt/unifi2mqtt.py
+          git add CHANGELOG.md switch-vision-unifi2mqtt/CHANGELOG.md switch-vision-unifi2mqtt/unifi2mqtt.py
           git diff --cached --quiet && exit 0
           git commit -m 'Finalize UniFi2MQTT 2.0.50 metadata'
           git push origin HEAD:feature/unifi2mqtt-2.0.50-classic-port-probe
