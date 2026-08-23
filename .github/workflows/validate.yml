@@ -102,7 +102,7 @@ jobs:
 
 # TEMP 2.0.50 PREPARER START
   prepare_2_0_50:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/unifi2mqtt-2.0.50-classic-port-probe'
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/unifi2mqtt-2.0.50-classic-port-probe'
     runs-on: ubuntu-latest
     permissions:
       contents: write
