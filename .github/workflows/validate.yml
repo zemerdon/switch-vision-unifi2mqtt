@@ -24,7 +24,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Supervisor MQTT wrapper contract
@@ -33,6 +33,13 @@ jobs:
           grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
           grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
           grep -q '^exec python3 ' switch-vision-unifi2mqtt/run.sh
+      - name: Classic port-stat probe packaging contract
+        run: |
+          grep -q 'COPY classic_port_probe.py /classic_port_probe.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q '/classic_port_probe.py' switch-vision-unifi2mqtt/run.sh
+          grep -q 'classic_port_traffic_probe.json' switch-vision-unifi2mqtt/run.sh
+          grep -q 'raw_controller_payload_stored.*False' switch-vision-unifi2mqtt/classic_port_probe.py
+          grep -q 'private_identifiers_included.*False' switch-vision-unifi2mqtt/classic_port_probe.py
       - name: Version and repository metadata
         run: |
           python - <<'PY'
@@ -43,9 +50,11 @@ jobs:
           cfg = (root / 'switch-vision-unifi2mqtt/config.yaml').read_text()
           run = (root / 'switch-vision-unifi2mqtt/run.sh').read_text()
           py = (root / 'switch-vision-unifi2mqtt/unifi2mqtt.py').read_text()
+          probe = (root / 'switch-vision-unifi2mqtt/classic_port_probe.py').read_text()
           assert re.search(r'^version:\s*["\']?' + re.escape(version) + r'["\']?\s*$', cfg, re.M)
           assert f'VERSION="{version}"' in run
           assert f'VERSION = "{version}"' in py
+          assert f'VERSION = "{version}"' in probe
           assert 'https://github.com/zemerdon/switch-vision-unifi2mqtt' in cfg
           print('metadata/version checks: PASS')
           PY
@@ -59,6 +68,7 @@ jobs:
           python switch-vision-unifi2mqtt/self-test.py
           python switch-vision-unifi2mqtt/hardening-test.py
           python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+          python switch-vision-unifi2mqtt/classic-port-probe-test.py
 
   container-build:
     name: Container build / ${{ matrix.arch }}
@@ -89,3 +99,73 @@ jobs:
             BUILD_VERSION=${{ github.sha }}
             BUILD_ARCH=${{ matrix.arch }}
           tags: ghcr.io/zemerdon/switch-vision-unifi2mqtt:ci-${{ matrix.arch }}
+
+# TEMP 2.0.50 PREPARER START
+  prepare_2_0_50:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/unifi2mqtt-2.0.50-classic-port-probe'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out product branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: feature/unifi2mqtt-2.0.50-classic-port-probe
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Finalize 2.0.50 metadata and remove preparer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          version = '2.0.50'
+          bridge = Path('switch-vision-unifi2mqtt/unifi2mqtt.py')
+          text = bridge.read_text(encoding='utf-8')
+          old = 'VERSION = "2.0.49"'
+          new = f'VERSION = "{version}"'
+          if new not in text:
+              if text.count(old) != 1:
+                  raise SystemExit('Could not locate unique UniFi2MQTT embedded version constant')
+              text = text.replace(old, new, 1)
+              bridge.write_text(text, encoding='utf-8', newline='\n')
+
+          entry = '''## v2.0.50
+
+- Add a one-shot, read-only capability probe for the local UniFi Network classic `stat/device` endpoint to discover whether real per-port traffic counters are available.
+- Reuse the existing local Integration API key and resolved site metadata; classic-endpoint authentication or availability failures remain non-fatal and normal UniFi2MQTT polling continues unchanged.
+- Write only privacy-safe capability evidence to `/share/switch_vision/unifi/classic_port_traffic_probe.json`: hardware model, port counts, and presence counts for approved RX/TX counter fields. Raw controller payloads, names, MACs, IPs, serials, VLANs, descriptions, credentials, and API keys are never stored by the probe.
+- Keep MQTT topics, Home Assistant entities, normalized device snapshots, Core activity behavior, and `per_port_traffic` capability unchanged in this release. This release collects evidence only; it does not synthesize or publish per-port traffic.
+- Add permanent offline regressions for site resolution, counter detection, no-counter behavior, privacy redaction, secure output permissions, packaging, and both supported container architectures.
+
+'''
+          for path in (Path('CHANGELOG.md'), Path('switch-vision-unifi2mqtt/CHANGELOG.md')):
+              current = path.read_text(encoding='utf-8')
+              if '## v2.0.50\n' not in current:
+                  heading = '# Changelog\n\n'
+                  if not current.startswith(heading):
+                      raise SystemExit(f'Unexpected changelog heading: {path}')
+                  current = heading + entry + current[len(heading):]
+                  path.write_text(current, encoding='utf-8', newline='\n')
+
+          workflow = Path('.github/workflows/validate.yml')
+          current = workflow.read_text(encoding='utf-8')
+          start = '# TEMP 2.0.50 PREPARER START'
+          end = '# TEMP 2.0.50 PREPARER END'
+          if start not in current or end not in current:
+              raise SystemExit('Temporary preparer markers are missing')
+          before, rest = current.split(start, 1)
+          _discard, after = rest.split(end, 1)
+          cleaned = before.rstrip() + '\n' + after.lstrip('\n')
+          workflow.write_text(cleaned, encoding='utf-8', newline='\n')
+          PY
+
+          git diff --check
+          git config user.name 'switch-vision-ci'
+          git config user.email 'switch-vision-ci@users.noreply.github.com'
+          git add .github/workflows/validate.yml CHANGELOG.md switch-vision-unifi2mqtt/CHANGELOG.md switch-vision-unifi2mqtt/unifi2mqtt.py
+          git diff --cached --quiet && exit 0
+          git commit -m 'Finalize UniFi2MQTT 2.0.50 metadata'
+          git push origin HEAD:feature/unifi2mqtt-2.0.50-classic-port-probe
+# TEMP 2.0.50 PREPARER END
