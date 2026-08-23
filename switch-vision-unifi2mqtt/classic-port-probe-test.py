@@ -15,6 +15,10 @@ probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)
 
 
+def test_probe_version() -> None:
+    assert probe.VERSION == "2.0.50"
+
+
 def test_site_resolution() -> None:
     sites = [
         {"id": "site-uuid", "internalReference": "default", "name": "Default"},
@@ -115,6 +119,7 @@ def test_invalid_classic_payload_fails_closed() -> None:
 
 
 if __name__ == "__main__":
+    test_probe_version()
     test_site_resolution()
     test_counter_summary_is_private_and_truthful()
     test_no_counter_synthesis()
