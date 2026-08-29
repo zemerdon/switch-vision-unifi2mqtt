@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 import unifi2mqtt as core
-from controller_config import parse_controller_entries
+from controller_config import controller_namespace, parse_controller_entries
 from multi_controller import NamespacedPublisher, poll_multi_once
 
 
@@ -87,7 +87,12 @@ def global_cfg() -> dict:
 
 def test_controller_config_validation() -> None:
     rows = controller_rows()
-    assert [row["namespace"] for row in rows] == ["home", "remote"]
+    assert [row["namespace"] for row in rows] == [
+        controller_namespace("home"),
+        controller_namespace("remote"),
+    ]
+    assert rows[0]["namespace"] != "home"
+    assert rows[1]["namespace"] != "remote"
     assert rows[1]["site_id"] == "Remote Site"
 
     try:
@@ -131,20 +136,25 @@ def test_controller_config_validation() -> None:
 
 
 def test_namespaced_publisher_identity() -> None:
+    namespace = controller_namespace("remote")
     publisher = NamespacedPublisher.__new__(NamespacedPublisher)
-    publisher.identity_namespace = "remote"
+    publisher.identity_namespace = namespace
     original = sample_device("Switch")
     namespaced = publisher._namespaced_device(original)
-    assert namespaced["id"] == "remote__same-device-id"
+    assert namespaced["id"] == f"{namespace}__same-device-id"
     assert original["id"] == "same-device-id"
 
 
 def test_two_controllers_with_same_device_id_do_not_collide() -> None:
     rows = controller_rows()
     publisher = FakePublisher()
+    home_ns, remote_ns = [row["namespace"] for row in rows]
 
     with tempfile.TemporaryDirectory() as temp:
-        snapshot = Path(temp) / "devices.json"
+        root = Path(temp)
+        public_root = root / "public"
+        state_root = root / "private"
+        snapshot = public_root / "devices.json"
 
         def fake_poller(cfg: dict, controller_snapshot: Path, _publisher: FakePublisher) -> None:
             name = "Home" if "10.0.0.1" in cfg["controller_url"] else "Remote"
@@ -154,39 +164,54 @@ def test_two_controllers_with_same_device_id_do_not_collide() -> None:
             global_cfg(),
             rows,
             snapshot,
+            state_root,
             publisher,
             poller=fake_poller,
         )
 
         ids = sorted(str(item["id"]) for item in devices)
-        assert ids == ["home__same-device-id", "remote__same-device-id"]
-        assert {item["controller_id"] for item in devices} == {"home", "remote"}
-        assert {item["source_device_id"] for item in devices} == {"same-device-id"}
+        assert ids == sorted(
+            [
+                f"{home_ns}__same-device-id",
+                f"{remote_ns}__same-device-id",
+            ]
+        )
+        assert all("controller_id" not in item for item in devices)
+        assert all("source_device_id" not in item for item in devices)
 
         payload = json.loads(snapshot.read_text(encoding="utf-8"))
         assert sorted(item["id"] for item in payload["devices"]) == ids
 
         diagnostics = json.loads(
-            (Path(temp) / "diagnostics.json").read_text(encoding="utf-8")
+            (public_root / "diagnostics.json").read_text(encoding="utf-8")
         )
         assert diagnostics["status"] == "success"
         assert diagnostics["controllers_configured"] == 2
         assert diagnostics["controllers_successful"] == 2
         assert diagnostics["switching_devices"] == 2
-        assert "home" not in json.dumps(diagnostics).lower()
-        assert "remote" not in json.dumps(diagnostics).lower()
-        assert "10.0.0.1" not in json.dumps(diagnostics)
-        assert "10.1.0.1" not in json.dumps(diagnostics)
+        serialized = json.dumps(diagnostics).lower()
+        assert "home" not in serialized
+        assert "remote" not in serialized
+        assert "10.0.0.1" not in serialized
+        assert "10.1.0.1" not in serialized
+
+        # Private controller state must not live under the Support My Switch source tree.
+        assert not (public_root / "controllers").exists()
+        assert (state_root / "controllers" / home_ns / "devices.json").is_file()
+        assert (state_root / "controllers" / remote_ns / "devices.json").is_file()
 
 
 def test_failed_controller_preserves_snapshot_and_marks_it_offline() -> None:
     rows = controller_rows()
     publisher = FakePublisher()
+    home_ns, remote_ns = [row["namespace"] for row in rows]
 
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        snapshot = root / "devices.json"
-        remote_snapshot = root / "controllers" / "remote" / "devices.json"
+        public_root = root / "public"
+        state_root = root / "private"
+        snapshot = public_root / "devices.json"
+        remote_snapshot = state_root / "controllers" / remote_ns / "devices.json"
         core.write_snapshot(remote_snapshot, [sample_device("Remote previous")], 0)
 
         def fake_poller(cfg: dict, controller_snapshot: Path, _publisher: FakePublisher) -> None:
@@ -198,17 +223,22 @@ def test_failed_controller_preserves_snapshot_and_marks_it_offline() -> None:
             global_cfg(),
             rows,
             snapshot,
+            state_root,
             publisher,
             poller=fake_poller,
         )
 
-        assert sorted(item["id"] for item in devices) == [
-            "home__same-device-id",
-            "remote__same-device-id",
-        ]
-        assert ("remote", "same-device-id") in publisher.offline
+        assert sorted(item["id"] for item in devices) == sorted(
+            [
+                f"{home_ns}__same-device-id",
+                f"{remote_ns}__same-device-id",
+            ]
+        )
+        assert (remote_ns, "same-device-id") in publisher.offline
 
-        diagnostics = json.loads((root / "diagnostics.json").read_text(encoding="utf-8"))
+        diagnostics = json.loads(
+            (public_root / "diagnostics.json").read_text(encoding="utf-8")
+        )
         assert diagnostics["status"] == "partial"
         assert diagnostics["controllers_successful"] == 1
         assert diagnostics["controllers_failed"] == 1
@@ -217,18 +247,22 @@ def test_failed_controller_preserves_snapshot_and_marks_it_offline() -> None:
 def test_removed_controller_is_retired_without_touching_current_controller() -> None:
     home = controller_rows()[:1]
     publisher = FakePublisher()
+    home_ns = home[0]["namespace"]
+    old_ns = controller_namespace("old")
 
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
-        snapshot = root / "devices.json"
-        old_snapshot = root / "controllers" / "old" / "devices.json"
+        public_root = root / "public"
+        state_root = root / "private"
+        snapshot = public_root / "devices.json"
+        old_snapshot = state_root / "controllers" / old_ns / "devices.json"
         core.write_snapshot(old_snapshot, [sample_device("Old")], 0)
-        (root / "controller_state.json").write_text(
-            json.dumps({"controllers": ["old"]}),
+        core.secure_directory(state_root)
+        (state_root / "controller_state.json").write_text(
+            json.dumps({"controllers": [old_ns]}),
             encoding="utf-8",
         )
-        core.secure_directory(root)
-        (root / "controller_state.json").chmod(0o600)
+        (state_root / "controller_state.json").chmod(0o600)
 
         def fake_poller(_cfg: dict, controller_snapshot: Path, _publisher: FakePublisher) -> None:
             core.write_snapshot(controller_snapshot, [sample_device("Home")], 0)
@@ -237,14 +271,17 @@ def test_removed_controller_is_retired_without_touching_current_controller() -> 
             global_cfg(),
             home,
             snapshot,
+            state_root,
             publisher,
             poller=fake_poller,
         )
 
-        assert [item["id"] for item in devices] == ["home__same-device-id"]
-        assert ("old", "same-device-id") in publisher.removed
-        registry = json.loads((root / "controller_state.json").read_text(encoding="utf-8"))
-        assert registry["controllers"] == ["home"]
+        assert [item["id"] for item in devices] == [f"{home_ns}__same-device-id"]
+        assert (old_ns, "same-device-id") in publisher.removed
+        registry = json.loads(
+            (state_root / "controller_state.json").read_text(encoding="utf-8")
+        )
+        assert registry["controllers"] == [home_ns]
 
 
 def main() -> int:
