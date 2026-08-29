@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
-VERSION = "2.0.50"
+VERSION = "3.0.0"
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
 COUNTER_FIELDS = (
     "rx_bytes",

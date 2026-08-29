@@ -24,7 +24,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+        run: python -m py_compile switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/controller_config.py switch-vision-unifi2mqtt/multi_controller.py switch-vision-unifi2mqtt/multi_controller_probe.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/multi-controller-test.py switch-vision-unifi2mqtt/multi-controller-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Supervisor MQTT wrapper contract
@@ -32,14 +32,35 @@ jobs:
           grep -q 'mqtt:need' switch-vision-unifi2mqtt/config.yaml
           grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
           grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
-          grep -q '^exec python3 ' switch-vision-unifi2mqtt/run.sh
+          grep -q '^exec python3 /multi_controller.py ' switch-vision-unifi2mqtt/run.sh
+      - name: Multi-controller packaging and privacy contract
+        run: |
+          grep -q '^  controllers: \[\]' switch-vision-unifi2mqtt/config.yaml
+          grep -q '^  controllers:$' switch-vision-unifi2mqtt/config.yaml
+          grep -q 'COPY controller_config.py /controller_config.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q 'COPY multi_controller.py /multi_controller.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q 'COPY multi_controller_probe.py /multi_controller_probe.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q '/multi_controller.py' switch-vision-unifi2mqtt/run.sh
+          grep -q '/multi_controller_probe.py' switch-vision-unifi2mqtt/run.sh
+          grep -q -- '--state-root /data/multi_controller_state' switch-vision-unifi2mqtt/run.sh
+          grep -q 'DEFAULT_STATE_ROOT = Path("/data/multi_controller_state")' switch-vision-unifi2mqtt/multi_controller.py
+          ! grep -R '/share/switch_vision/unifi/controllers' README.md switch-vision-unifi2mqtt/README.md switch-vision-unifi2mqtt/*.py switch-vision-unifi2mqtt/run.sh
+          PYTHONPATH=switch-vision-unifi2mqtt python - <<'PY'
+          from controller_config import controller_namespace, scoped_device_id
+          namespace = controller_namespace("branch-office")
+          assert "branch" not in namespace
+          scoped = scoped_device_id(namespace, "x" * 500)
+          assert len(scoped) <= 128
+          assert "branch" not in scoped
+          print("opaque/bounded controller identity: PASS")
+          PY
       - name: Classic port-stat probe packaging contract
         run: |
           grep -q 'COPY classic_port_probe.py /classic_port_probe.py' switch-vision-unifi2mqtt/Dockerfile
-          grep -q '/classic_port_probe.py' switch-vision-unifi2mqtt/run.sh
           grep -q 'classic_port_traffic_probe.json' switch-vision-unifi2mqtt/run.sh
           grep -q 'raw_controller_payload_stored.*False' switch-vision-unifi2mqtt/classic_port_probe.py
           grep -q 'private_identifiers_included.*False' switch-vision-unifi2mqtt/classic_port_probe.py
+          grep -q 'private_identifiers_included' switch-vision-unifi2mqtt/multi_controller.py
       - name: Version and repository metadata
         run: |
           python - <<'PY'
@@ -69,6 +90,8 @@ jobs:
           python switch-vision-unifi2mqtt/hardening-test.py
           python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
           python switch-vision-unifi2mqtt/classic-port-probe-test.py
+          python switch-vision-unifi2mqtt/multi-controller-test.py
+          python switch-vision-unifi2mqtt/multi-controller-probe-test.py
 
   container-build:
     name: Container build / ${{ matrix.arch }}

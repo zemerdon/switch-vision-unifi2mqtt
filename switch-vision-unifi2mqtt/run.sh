@@ -2,11 +2,13 @@
 set -eu
 umask 077
 
-VERSION="2.0.50"
+VERSION="3.0.0"
 bashio::log.info "Switch Vision UniFi2MQTT v${VERSION} starting."
 
 mkdir -p /share/switch_vision/unifi
 chmod 0700 /share/switch_vision/unifi
+mkdir -p /data/multi_controller_state
+chmod 0700 /data/multi_controller_state
 
 MQTT_CONFIG_HOST="$(bashio::config 'mqtt_host' 2>/dev/null || true)"
 MQTT_CONFIG_PORT="$(bashio::config 'mqtt_port' 2>/dev/null || true)"
@@ -58,7 +60,7 @@ export SV_MQTT_HOST SV_MQTT_PORT SV_MQTT_USERNAME SV_MQTT_PASSWORD
 
 bashio::log.info "MQTT broker host: ${SV_MQTT_HOST}"
 
-if python3 /classic_port_probe.py \
+if python3 /multi_controller_probe.py \
   --config /data/options.json \
   --output /share/switch_vision/unifi/classic_port_traffic_probe.json; then
   bashio::log.info "UniFi per-port traffic capability probe completed."
@@ -66,4 +68,7 @@ else
   bashio::log.warning "UniFi per-port traffic capability probe could not write diagnostics; continuing normally."
 fi
 
-exec python3 /unifi2mqtt.py --config /data/options.json --snapshot /share/switch_vision/unifi/devices.json
+exec python3 /multi_controller.py \
+  --config /data/options.json \
+  --snapshot /share/switch_vision/unifi/devices.json \
+  --state-root /data/multi_controller_state
