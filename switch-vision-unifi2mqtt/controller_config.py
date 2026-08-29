@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,12 +28,21 @@ def multi_controller_enabled(data: dict[str, Any]) -> bool:
     return isinstance(controllers, list) and bool(controllers)
 
 
+def controller_namespace(controller_id: str) -> str:
+    normalized = core.slug(controller_id)
+    if not normalized:
+        raise RuntimeError("controller id does not produce a usable namespace")
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"c_{digest}"
+
+
 def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
     raw_entries = data.get("controllers")
     if not isinstance(raw_entries, list) or not raw_entries:
         raise RuntimeError("controllers must contain at least one controller entry")
 
     entries: list[dict[str, Any]] = []
+    normalized_ids: set[str] = set()
     namespaces: set[str] = set()
 
     for position, raw in enumerate(raw_entries, start=1):
@@ -45,10 +55,17 @@ def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
                 f"controllers entry {position} id must be 1-64 letters, digits, '-' or '_' "
                 "and start with a letter or digit"
             )
-        namespace = core.slug(controller_id)
-        if namespace in namespaces:
+        normalized_id = core.slug(controller_id)
+        if normalized_id in normalized_ids:
             raise RuntimeError(
                 f"controllers entry {position} id collides with another controller after normalization"
+            )
+        normalized_ids.add(normalized_id)
+
+        namespace = controller_namespace(controller_id)
+        if namespace in namespaces:
+            raise RuntimeError(
+                f"controllers entry {position} identity collides with another controller"
             )
         namespaces.add(namespace)
 
