@@ -65,7 +65,7 @@ Site selection continues to work as before:
 
 Set `controllers` to a non-empty list to poll more than one reachable UniFi controller or gateway in the same UniFi2MQTT instance. Each entry contains:
 
-- `id` — a stable short controller identity used only for collision-safe internal namespacing;
+- `id` — a stable short operator label used to derive an opaque collision-safe controller namespace; the label itself is not written into the shared Switch Vision data tree;
 - `controller_url` — the reachable local UniFi Network controller/gateway origin;
 - `api_key` — that controller's local Integration API key;
 - optional `site_id` — defaults to `auto` and reuses the existing site resolver;
@@ -87,13 +87,13 @@ controllers:
 
 The same controller URL may be listed more than once with different `site_id` values when multiple sites need to run concurrently. Remote controllers must already be reachable by the Home Assistant host; site-to-site VPN connectivity is a supported local-first network design. Cloud-controller access is not part of this implementation.
 
-Multi-controller mode deliberately isolates each controller under private state storage in `/share/switch_vision/unifi/controllers/`. A failed controller therefore cannot trigger retirement of healthy devices from another controller. The public-to-Switch-Vision aggregate remains `/share/switch_vision/unifi/devices.json`, where controller-scoped composite IDs prevent duplicate raw UniFi device IDs from colliding.
+Multi-controller mode isolates each controller's retirement/previous-snapshot state inside the Home Assistant app's private persistent `/data/multi_controller_state/` area. That private state is intentionally outside `/share/switch_vision`, so Support My Switch does not admit raw per-controller snapshots or operator controller labels. A failed controller therefore cannot trigger retirement of healthy devices from another controller.
 
-Home Assistant MQTT device identities are also controller-scoped in multi-controller mode. Removing a controller from configuration retires only that controller's retained MQTT/Home Assistant Discovery topics.
+The Discovery-facing aggregate remains `/share/switch_vision/unifi/devices.json`. It uses opaque controller-scoped composite device IDs to prevent duplicate raw UniFi device IDs from colliding. The same bounded composite ID is used for Home Assistant MQTT device identity, and Support My Switch's existing UniFi snapshot sanitizer masks it before a contribution package is built.
+
+Removing a controller from configuration retires only that controller's retained MQTT/Home Assistant Discovery topics.
 
 By default, the app resolves Home Assistant's Supervisor MQTT service automatically. `mqtt_host`, MQTT credentials and other MQTT fields remain available as optional overrides for custom brokers.
-
-Optional MQTT and polling settings are exposed through the Home Assistant App configuration UI and Switch Vision Hub when the app is installed.
 
 The API key and MQTT password are treated as secrets and are not written into privacy-safe diagnostics. New installations default to TLS certificate verification; disabling verification remains available for self-signed local controllers and produces an explicit runtime warning.
 
@@ -123,6 +123,7 @@ python3 switch-vision-unifi2mqtt/hardening-test.py
 python3 switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
 python3 switch-vision-unifi2mqtt/classic-port-probe-test.py
 python3 switch-vision-unifi2mqtt/multi-controller-test.py
+python3 switch-vision-unifi2mqtt/multi-controller-probe-test.py
 ```
 
 The permanent GitHub Actions validation workflow checks Python and shell syntax, Supervisor MQTT wrapper behaviour, release/configuration consistency, legacy and multi-controller regressions, privacy-safe capability probing, and real amd64/arm64 container builds.
