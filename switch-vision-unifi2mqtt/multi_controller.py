@@ -23,6 +23,7 @@ from controller_config import (
 VERSION = core.VERSION
 REGISTRY_NAME = "controller_state.json"
 CONTROLLER_DIR = "controllers"
+DEFAULT_STATE_ROOT = Path("/data/multi_controller_state")
 
 
 class NamespacedPublisher(core.Publisher):
@@ -118,25 +119,25 @@ def _secure_write_json(path: Path, payload: dict[str, Any]) -> None:
             pass
 
 
-def _controller_snapshot(root: Path, namespace: str) -> Path:
-    return root / CONTROLLER_DIR / namespace / "devices.json"
+def _controller_snapshot(state_root: Path, namespace: str) -> Path:
+    return state_root / CONTROLLER_DIR / namespace / "devices.json"
 
 
-def _registry_path(root: Path) -> Path:
-    return root / REGISTRY_NAME
+def _registry_path(state_root: Path) -> Path:
+    return state_root / REGISTRY_NAME
 
 
-def _read_registry(root: Path) -> list[str]:
-    payload = _read_json(_registry_path(root))
+def _read_registry(state_root: Path) -> list[str]:
+    payload = _read_json(_registry_path(state_root))
     rows = payload.get("controllers") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return []
     return [str(value) for value in rows if isinstance(value, str) and value]
 
 
-def _write_registry(root: Path, namespaces: list[str]) -> None:
+def _write_registry(state_root: Path, namespaces: list[str]) -> None:
     _secure_write_json(
-        _registry_path(root),
+        _registry_path(state_root),
         {
             "schema_version": 1,
             "product": "Switch Vision UniFi2MQTT",
@@ -152,14 +153,12 @@ def aggregate_device(namespace: str, device: dict[str, Any]) -> dict[str, Any]:
     source_id = str(clone.get("id") or "").strip()
     if not source_id:
         raise RuntimeError("Cannot aggregate a UniFi device without an id")
-    clone["source_device_id"] = source_id
-    clone["controller_id"] = namespace
     clone["id"] = f"{namespace}__{source_id}"
     return clone
 
 
 def _aggregate_current_snapshots(
-    root: Path,
+    state_root: Path,
     controllers: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     combined: list[dict[str, Any]] = []
@@ -167,7 +166,7 @@ def _aggregate_current_snapshots(
 
     for entry in controllers:
         namespace = str(entry["namespace"])
-        for device in _read_devices(_controller_snapshot(root, namespace)):
+        for device in _read_devices(_controller_snapshot(state_root, namespace)):
             item = aggregate_device(namespace, device)
             device_id = str(item["id"])
             if device_id in seen:
@@ -179,7 +178,7 @@ def _aggregate_current_snapshots(
 
 
 def _write_multi_diagnostics(
-    root: Path,
+    public_root: Path,
     *,
     controller_results: list[dict[str, Any]],
     devices: list[dict[str, Any]],
@@ -205,7 +204,7 @@ def _write_multi_diagnostics(
         safe_results.append(row)
 
     _secure_write_json(
-        root / "diagnostics.json",
+        public_root / "diagnostics.json",
         {
             "schema_version": 1,
             "product": "Switch Vision UniFi2MQTT",
@@ -236,14 +235,14 @@ def _mark_previous_offline(
 
 
 def _cleanup_removed_controllers(
-    root: Path,
+    state_root: Path,
     current_namespaces: set[str],
     publisher: NamespacedPublisher,
 ) -> int:
     removed_topics = 0
-    for namespace in sorted(set(_read_registry(root)) - current_namespaces):
+    for namespace in sorted(set(_read_registry(state_root)) - current_namespaces):
         publisher.set_identity_namespace(namespace)
-        for device in _read_devices(_controller_snapshot(root, namespace)):
+        for device in _read_devices(_controller_snapshot(state_root, namespace)):
             removed_topics += len(publisher.remove_device(device))
         publisher.flush()
         logging.info(
@@ -257,20 +256,22 @@ def poll_multi_once(
     global_cfg: dict[str, Any],
     controllers: list[dict[str, Any]],
     snapshot: Path,
+    state_root: Path,
     publisher: NamespacedPublisher,
     poller: Callable[[dict[str, Any], Path, Any], None] = core.poll_once,
 ) -> list[dict[str, Any]]:
-    root = snapshot.parent
-    core.secure_directory(root)
-    core.secure_directory(root / CONTROLLER_DIR)
+    public_root = snapshot.parent
+    core.secure_directory(public_root)
+    core.secure_directory(state_root)
+    core.secure_directory(state_root / CONTROLLER_DIR)
 
     namespaces = [str(entry["namespace"]) for entry in controllers]
-    _cleanup_removed_controllers(root, set(namespaces), publisher)
+    _cleanup_removed_controllers(state_root, set(namespaces), publisher)
 
     results: list[dict[str, Any]] = []
     for entry in controllers:
         namespace = str(entry["namespace"])
-        controller_snapshot = _controller_snapshot(root, namespace)
+        controller_snapshot = _controller_snapshot(state_root, namespace)
         core.secure_directory(controller_snapshot.parent)
         publisher.set_identity_namespace(namespace)
         cfg = runtime_config(global_cfg, entry)
@@ -292,11 +293,11 @@ def poll_multi_once(
                 }
             )
 
-    devices = _aggregate_current_snapshots(root, controllers)
+    devices = _aggregate_current_snapshots(state_root, controllers)
     with core.snapshot_operation_lock(snapshot):
         core.write_snapshot(snapshot, devices, 0)
-    _write_multi_diagnostics(root, controller_results=results, devices=devices)
-    _write_registry(root, namespaces)
+    _write_multi_diagnostics(public_root, controller_results=results, devices=devices)
+    _write_registry(state_root, namespaces)
     return devices
 
 
@@ -319,6 +320,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--snapshot", type=Path, required=True)
+    parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
     args = parser.parse_args()
 
     try:
@@ -382,7 +384,13 @@ def main() -> int:
         while not core.STOP:
             started = time.monotonic()
             try:
-                poll_multi_once(global_cfg, controllers, args.snapshot, publisher)
+                poll_multi_once(
+                    global_cfg,
+                    controllers,
+                    args.snapshot,
+                    args.state_root,
+                    publisher,
+                )
             except Exception as exc:
                 logging.error("Multi-controller aggregation failed: %s", exc)
 
