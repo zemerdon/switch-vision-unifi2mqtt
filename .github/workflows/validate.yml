@@ -33,7 +33,7 @@ jobs:
           grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
           grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
           grep -q '^exec python3 /multi_controller.py ' switch-vision-unifi2mqtt/run.sh
-      - name: Multi-controller packaging contract
+      - name: Multi-controller packaging and privacy contract
         run: |
           grep -q '^  controllers: \[\]' switch-vision-unifi2mqtt/config.yaml
           grep -q '^  controllers:$' switch-vision-unifi2mqtt/config.yaml
@@ -42,6 +42,18 @@ jobs:
           grep -q 'COPY multi_controller_probe.py /multi_controller_probe.py' switch-vision-unifi2mqtt/Dockerfile
           grep -q '/multi_controller.py' switch-vision-unifi2mqtt/run.sh
           grep -q '/multi_controller_probe.py' switch-vision-unifi2mqtt/run.sh
+          grep -q -- '--state-root /data/multi_controller_state' switch-vision-unifi2mqtt/run.sh
+          grep -q 'DEFAULT_STATE_ROOT = Path("/data/multi_controller_state")' switch-vision-unifi2mqtt/multi_controller.py
+          ! grep -R '/share/switch_vision/unifi/controllers' README.md switch-vision-unifi2mqtt/README.md switch-vision-unifi2mqtt/*.py switch-vision-unifi2mqtt/run.sh
+          PYTHONPATH=switch-vision-unifi2mqtt python - <<'PY'
+          from controller_config import controller_namespace, scoped_device_id
+          namespace = controller_namespace("branch-office")
+          assert "branch" not in namespace
+          scoped = scoped_device_id(namespace, "x" * 500)
+          assert len(scoped) <= 128
+          assert "branch" not in scoped
+          print("opaque/bounded controller identity: PASS")
+          PY
       - name: Classic port-stat probe packaging contract
         run: |
           grep -q 'COPY classic_port_probe.py /classic_port_probe.py' switch-vision-unifi2mqtt/Dockerfile
