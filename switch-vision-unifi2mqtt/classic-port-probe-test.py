@@ -16,7 +16,8 @@ spec.loader.exec_module(probe)
 
 
 def test_probe_version() -> None:
-    assert probe.VERSION == "2.0.50"
+    expected_version = (ROOT.parent / "VERSION").read_text(encoding="utf-8").strip()
+    assert probe.VERSION == expected_version
 
 
 def test_site_resolution() -> None:
