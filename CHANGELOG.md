@@ -1,5 +1,20 @@
 # Changelog
 
+## v3.0.0
+
+- Add first-class concurrent multi-controller / multi-site operation through the optional `controllers` list while preserving the existing single-controller runtime unchanged when the list is empty.
+- Reuse the existing local UniFi site resolver for every configured controller, including the same reachable controller listed more than once for different sites.
+- Add stable operator controller IDs that are transformed into deterministic opaque namespaces before they enter MQTT or the shared Switch Vision data tree.
+- Scope MQTT and Home Assistant device identities per controller and bound composite device IDs to the existing 128-character Switch Vision Core contract, preventing collisions when different controllers return the same raw UniFi device ID.
+- Keep per-controller snapshots, empty-set confirmation state and retirement state in private persistent `/data/multi_controller_state/`, deliberately outside `/share/switch_vision` and the Support My Switch collection tree.
+- Preserve the last known snapshot for a temporarily unavailable controller, mark only that controller's devices unavailable, and continue polling healthy controllers instead of allowing one remote-site failure to retire unrelated devices.
+- Retire retained MQTT and Home Assistant Discovery topics only for a controller that is explicitly removed from configuration.
+- Share one MQTT connection across configured controllers while maintaining controller-scoped availability and entity identity.
+- Aggregate the read-only classic local per-port traffic capability probe across configured controllers without storing controller URLs, API keys, site labels, operator IDs or raw controller payloads.
+- Keep remote access local-first: controllers must already be reachable from Home Assistant, such as across a site-to-site VPN; UniFi cloud API access is not part of 3.0.0.
+- Pair with Switch Vision Discovery 2.3.30, which understands multi-controller readiness in the Hub while keeping controller lists and per-controller secrets owned by Home Assistant App configuration and out of the browser response.
+- Add permanent regressions for legacy single-controller compatibility, controller-ID collision rejection, opaque/bounded identities, duplicate raw device IDs across controllers, private-state separation, partial controller failure, controller removal retirement, privacy-safe aggregate diagnostics and multi-controller classic capability probing.
+
 ## v2.0.50
 
 - Add a one-shot, read-only capability probe for the local UniFi Network classic `stat/device` endpoint to discover whether real per-port traffic counters are available.
