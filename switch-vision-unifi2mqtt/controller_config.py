@@ -11,6 +11,7 @@ from typing import Any
 import unifi2mqtt as core
 
 CONTROLLER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+MAX_SCOPED_DEVICE_ID_LENGTH = 128
 
 
 def load_raw_options(path: Path) -> dict[str, Any]:
@@ -34,6 +35,18 @@ def controller_namespace(controller_id: str) -> str:
         raise RuntimeError("controller id does not produce a usable namespace")
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
     return f"c_{digest}"
+
+
+def scoped_device_id(namespace: str, raw_device_id: str) -> str:
+    namespace = str(namespace or "").strip()
+    raw_device_id = str(raw_device_id or "").strip()
+    if not namespace or not raw_device_id:
+        raise RuntimeError("controller namespace and raw device id are required")
+    candidate = f"{namespace}__{raw_device_id}"
+    if len(candidate) <= MAX_SCOPED_DEVICE_ID_LENGTH:
+        return candidate
+    digest = hashlib.sha256(raw_device_id.encode("utf-8")).hexdigest()
+    return f"{namespace}__h_{digest}"
 
 
 def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
