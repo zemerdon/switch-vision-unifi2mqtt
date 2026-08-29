@@ -87,7 +87,8 @@ def expect_config_failure(m, data, text):
 
 def main() -> int:
     m = load_module()
-    assert m.VERSION == "2.0.50"
+    expected_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+    assert m.VERSION == expected_version
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
     assert not m.is_switch({"features": ["switching"], "model": "AirWire"})
     assert m.is_switch({"features": ["switching"], "model": "UDM Pro Max"})
@@ -274,7 +275,7 @@ def main() -> int:
     assert 'site_id: "auto"' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print("Switch Vision UniFi2MQTT v2.0.50 hardening regression: PASS")
+    print(f"Switch Vision UniFi2MQTT v{m.VERSION} hardening regression: PASS")
     return 0
 
 
