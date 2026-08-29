@@ -17,9 +17,9 @@ services:
 options:
   controller_url: "https://192.168.1.1"
   site_id: "auto"
-  api_key: null
   verify_ssl: "true"
   allow_insecure_http: "false"
+  controllers: []
   poll_interval: "30"
   mqtt_host: ""
   mqtt_port: "1883"
@@ -33,9 +33,16 @@ options:
 schema:
   controller_url: str
   site_id: str
-  api_key: password
+  api_key: password?
   verify_ssl: list(false|true)
   allow_insecure_http: list(false|true)
+  controllers:
+    - id: str
+      controller_url: str
+      site_id: str?
+      api_key: password
+      verify_ssl: list(false|true)?
+      allow_insecure_http: list(false|true)?
   poll_interval: int(10,300)
   mqtt_host: str?
   mqtt_port: port
