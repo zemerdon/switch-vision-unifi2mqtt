@@ -18,6 +18,7 @@ from controller_config import (
     load_raw_options,
     multi_controller_enabled,
     runtime_config,
+    scoped_device_id,
 )
 
 VERSION = core.VERSION
@@ -44,7 +45,7 @@ class NamespacedPublisher(core.Publisher):
             return dict(device)
         clone = dict(device)
         raw_id = str(clone.get("id") or clone.get("name") or "").strip()
-        clone["id"] = f"{self.identity_namespace}__{raw_id}"
+        clone["id"] = scoped_device_id(self.identity_namespace, raw_id)
         return clone
 
     def publish_availability(self, d: dict[str, Any], status: str) -> None:
@@ -153,7 +154,7 @@ def aggregate_device(namespace: str, device: dict[str, Any]) -> dict[str, Any]:
     source_id = str(clone.get("id") or "").strip()
     if not source_id:
         raise RuntimeError("Cannot aggregate a UniFi device without an id")
-    clone["id"] = f"{namespace}__{source_id}"
+    clone["id"] = scoped_device_id(namespace, source_id)
     return clone
 
 
