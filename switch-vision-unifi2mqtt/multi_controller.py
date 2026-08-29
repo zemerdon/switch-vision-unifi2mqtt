@@ -5,6 +5,8 @@ import argparse
 import json
 import logging
 import os
+import re
+import shutil
 import signal
 import stat
 import sys
@@ -25,6 +27,7 @@ VERSION = core.VERSION
 REGISTRY_NAME = "controller_state.json"
 CONTROLLER_DIR = "controllers"
 DEFAULT_STATE_ROOT = Path("/data/multi_controller_state")
+CONTROLLER_NAMESPACE_RE = re.compile(r"^c_[0-9a-f]{16}$")
 
 
 class NamespacedPublisher(core.Publisher):
@@ -120,8 +123,23 @@ def _secure_write_json(path: Path, payload: dict[str, Any]) -> None:
             pass
 
 
+def _validate_controller_namespace(namespace: str) -> str:
+    text = str(namespace or "").strip()
+    if not CONTROLLER_NAMESPACE_RE.fullmatch(text):
+        raise RuntimeError("Invalid controller namespace in private state")
+    return text
+
+
+def _controller_state_dir(state_root: Path, namespace: str) -> Path:
+    text = _validate_controller_namespace(namespace)
+    path = state_root / CONTROLLER_DIR / text
+    if path.is_symlink():
+        raise RuntimeError(f"Refusing symlink controller state directory: {path}")
+    return path
+
+
 def _controller_snapshot(state_root: Path, namespace: str) -> Path:
-    return state_root / CONTROLLER_DIR / namespace / "devices.json"
+    return _controller_state_dir(state_root, namespace) / "devices.json"
 
 
 def _registry_path(state_root: Path) -> Path:
@@ -133,10 +151,16 @@ def _read_registry(state_root: Path) -> list[str]:
     rows = payload.get("controllers") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return []
-    return [str(value) for value in rows if isinstance(value, str) and value]
+    validated: list[str] = []
+    for value in rows:
+        if not isinstance(value, str):
+            raise RuntimeError("Controller state registry contains a non-text namespace")
+        validated.append(_validate_controller_namespace(value))
+    return validated
 
 
 def _write_registry(state_root: Path, namespaces: list[str]) -> None:
+    validated = [_validate_controller_namespace(value) for value in namespaces]
     _secure_write_json(
         _registry_path(state_root),
         {
@@ -144,7 +168,7 @@ def _write_registry(state_root: Path, namespaces: list[str]) -> None:
             "product": "Switch Vision UniFi2MQTT",
             "version": VERSION,
             "generated_at": int(time.time()),
-            "controllers": list(namespaces),
+            "controllers": validated,
         },
     )
 
@@ -240,15 +264,22 @@ def _cleanup_removed_controllers(
     current_namespaces: set[str],
     publisher: NamespacedPublisher,
 ) -> int:
+    validated_current = {_validate_controller_namespace(value) for value in current_namespaces}
     removed_topics = 0
-    for namespace in sorted(set(_read_registry(state_root)) - current_namespaces):
+    for namespace in sorted(set(_read_registry(state_root)) - validated_current):
+        controller_dir = _controller_state_dir(state_root, namespace)
         publisher.set_identity_namespace(namespace)
+        controller_topics = 0
         for device in _read_devices(_controller_snapshot(state_root, namespace)):
-            removed_topics += len(publisher.remove_device(device))
+            controller_topics += len(publisher.remove_device(device))
         publisher.flush()
+
+        if controller_dir.exists():
+            shutil.rmtree(controller_dir)
+        removed_topics += controller_topics
         logging.info(
-            "Retired MQTT state for a controller removed from configuration (%d topic(s)).",
-            removed_topics,
+            "Retired MQTT state and private snapshot for a controller removed from configuration (%d topic(s)).",
+            controller_topics,
         )
     return removed_topics
 

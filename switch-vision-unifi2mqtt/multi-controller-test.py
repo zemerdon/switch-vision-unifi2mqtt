@@ -278,10 +278,83 @@ def test_removed_controller_is_retired_without_touching_current_controller() -> 
 
         assert [item["id"] for item in devices] == [f"{home_ns}__same-device-id"]
         assert (old_ns, "same-device-id") in publisher.removed
+        assert not (state_root / "controllers" / old_ns).exists()
         registry = json.loads(
             (state_root / "controller_state.json").read_text(encoding="utf-8")
         )
         assert registry["controllers"] == [home_ns]
+
+
+def test_removed_controller_state_is_preserved_if_retirement_fails() -> None:
+    home = controller_rows()[:1]
+    old_ns = controller_namespace("old")
+
+    class FailingPublisher(FakePublisher):
+        def remove_device(self, device: dict) -> set[str]:
+            raise RuntimeError("simulated retirement failure")
+
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        public_root = root / "public"
+        state_root = root / "private"
+        snapshot = public_root / "devices.json"
+        old_snapshot = state_root / "controllers" / old_ns / "devices.json"
+        core.write_snapshot(old_snapshot, [sample_device("Old")], 0)
+        core.secure_directory(state_root)
+        (state_root / "controller_state.json").write_text(
+            json.dumps({"controllers": [old_ns]}),
+            encoding="utf-8",
+        )
+        (state_root / "controller_state.json").chmod(0o600)
+
+        try:
+            poll_multi_once(
+                global_cfg(),
+                home,
+                snapshot,
+                state_root,
+                FailingPublisher(),
+                poller=lambda *_args: None,
+            )
+        except RuntimeError as exc:
+            assert "retirement failure" in str(exc)
+        else:
+            raise AssertionError("controller retirement failure was ignored")
+
+        assert old_snapshot.is_file()
+        registry = json.loads(
+            (state_root / "controller_state.json").read_text(encoding="utf-8")
+        )
+        assert registry["controllers"] == [old_ns]
+
+
+def test_unsafe_stored_controller_namespace_fails_closed() -> None:
+    home = controller_rows()[:1]
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        public_root = root / "public"
+        state_root = root / "private"
+        snapshot = public_root / "devices.json"
+        core.secure_directory(state_root)
+        (state_root / "controller_state.json").write_text(
+            json.dumps({"controllers": ["../escape"]}),
+            encoding="utf-8",
+        )
+        (state_root / "controller_state.json").chmod(0o600)
+
+        try:
+            poll_multi_once(
+                global_cfg(),
+                home,
+                snapshot,
+                state_root,
+                FakePublisher(),
+                poller=lambda *_args: None,
+            )
+        except RuntimeError as exc:
+            assert "Invalid controller namespace" in str(exc)
+        else:
+            raise AssertionError("unsafe stored controller namespace was accepted")
 
 
 def main() -> int:
@@ -290,6 +363,8 @@ def main() -> int:
     test_two_controllers_with_same_device_id_do_not_collide()
     test_failed_controller_preserves_snapshot_and_marks_it_offline()
     test_removed_controller_is_retired_without_touching_current_controller()
+    test_removed_controller_state_is_preserved_if_retirement_fails()
+    test_unsafe_stored_controller_namespace_fails_closed()
     print("multi-controller regression tests: PASS")
     return 0
 
