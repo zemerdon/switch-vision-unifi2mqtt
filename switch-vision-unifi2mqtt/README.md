@@ -18,7 +18,7 @@ Set `controllers` to a non-empty list to poll several reachable UniFi controller
 
 Each entry has:
 
-- `id` — stable short ID used for collision-safe internal namespacing;
+- `id` — stable operator label used to derive an opaque internal namespace; the label itself stays in app configuration/private state;
 - `controller_url` — local/reachable UniFi Network origin;
 - `api_key` — local Integration API key for that controller;
 - optional `site_id` — defaults to `auto` and can also be a site UUID, exact name or internal reference;
@@ -40,7 +40,7 @@ controllers:
 
 The same controller can appear more than once with different site selections. Remote controllers must already be reachable from Home Assistant, for example over a site-to-site VPN. Cloud API access is not implemented by this feature.
 
-Multi-controller mode isolates each controller's snapshot and retirement state under `/share/switch_vision/unifi/controllers/`, then writes a collision-safe aggregate to `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery. A failed controller preserves its previous snapshot and is marked unavailable without retiring devices from healthy controllers.
+Multi-controller mode isolates each controller's previous snapshot, empty-set confirmation and retirement state under the app-private persistent `/data/multi_controller_state/` area, then writes a collision-safe aggregate to `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery. A failed controller preserves its previous private snapshot and is marked unavailable without retiring devices from healthy controllers.
 
 Removing a configured controller retires only that controller's retained MQTT and Home Assistant Discovery topics.
 
@@ -48,11 +48,13 @@ Removing a configured controller retires only that controller's retained MQTT an
 
 By default the app resolves Home Assistant's Supervisor MQTT service automatically. Custom MQTT broker overrides remain supported.
 
-Multi-controller mode uses one MQTT connection and controller-scoped device identities so duplicate raw UniFi device IDs cannot collide.
+Multi-controller mode uses one MQTT connection and opaque controller-scoped device identities so duplicate raw UniFi device IDs cannot collide. Composite IDs are bounded to the Core websocket device-ID contract.
 
 ## Privacy and diagnostics
 
-Credentials are never copied into snapshots or privacy-safe diagnostics. Aggregate diagnostics report controller counts/status only, without controller IDs, URLs or API keys.
+Credentials and operator controller labels are never copied into privacy-safe diagnostics. Aggregate diagnostics report controller counts/status only, without controller IDs, URLs or API keys.
+
+Private per-controller snapshots remain outside `/share/switch_vision`, so Support My Switch only sees the established aggregate snapshot and privacy-safe diagnostics. Its existing UniFi snapshot sanitizer masks aggregate device IDs before a contribution package is built.
 
 The startup classic Network API probe remains read-only and non-fatal. In multi-controller mode it probes each configured controller/site independently and aggregates only privacy-safe counter-presence results.
 
@@ -71,10 +73,10 @@ Primary privacy-safe diagnostics:
 /share/switch_vision/unifi/classic_port_traffic_probe.json
 ```
 
-Per-controller state remains private derived state under:
+Private persistent controller state:
 
 ```text
-/share/switch_vision/unifi/controllers/
+/data/multi_controller_state/
 ```
 
 Switch Vision UniFi2MQTT never calls UniFi write/action endpoints.
