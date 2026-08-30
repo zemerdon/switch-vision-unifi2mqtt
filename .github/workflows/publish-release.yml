@@ -218,17 +218,19 @@ jobs:
           tag_sha="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$VERSION" | awk '{print $1}')"
           test -n "$tag_sha"
           test "$tag_sha" = "$TARGET_SHA"
-          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$VERSION")"
-          python3 - <<'PY' <<< "$release_json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$VERSION" > /tmp/release.json
+          python3 - <<'PY'
           import json
           import os
-          import sys
+          from pathlib import Path
 
-          data = json.load(sys.stdin)
+          data = json.loads(Path('/tmp/release.json').read_text(encoding='utf-8'))
           if data.get('draft') is not False or data.get('prerelease') is not False:
               raise SystemExit('release must be public, non-draft and non-prerelease')
           if data.get('tag_name') != os.environ['VERSION']:
               raise SystemExit('release tag mismatch')
+          if data.get('target_commitish') != os.environ['TARGET_SHA']:
+              raise SystemExit('release target mismatch')
           print('UniFi2MQTT public GitHub release verification: PASS')
           PY
           echo "version=$VERSION"

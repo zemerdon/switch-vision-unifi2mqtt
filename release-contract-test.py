@@ -25,8 +25,11 @@ required = [
     '--latest',
     'Verify public tag and release target',
     'test "$tag_sha" = "$TARGET_SHA"',
+    'gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$VERSION" > /tmp/release.json',
+    "Path('/tmp/release.json').read_text(encoding='utf-8')",
     "data.get('draft') is not False",
     "data.get('prerelease') is not False",
+    "data.get('target_commitish') != os.environ['TARGET_SHA']",
 ]
 
 missing = [item for item in required if item not in workflow]
@@ -37,6 +40,8 @@ for forbidden in [
     'pull_request:\n',
     'workflow_dispatch:',
     'actions/checkout@v',
+    "python3 - <<'PY' <<<",
+    'release_json="$(gh api',
 ]:
     if forbidden in workflow:
         raise SystemExit(f'forbidden release publisher construct present: {forbidden!r}')
