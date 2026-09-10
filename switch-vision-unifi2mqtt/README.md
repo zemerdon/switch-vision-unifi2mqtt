@@ -12,7 +12,7 @@ Existing installs continue to use the established local fields. `transport` defa
 
 The Home Assistant app options now include the optional `api_key` entry so the field is available in the app configuration UI. When `controllers` is empty, the launcher transfers directly to the existing single-controller runtime so current MQTT topics, Home Assistant unique IDs, snapshots and retirement behaviour remain unchanged.
 
-Development source also supports unreleased `transport: remote` operation through the Site Manager connector. Remote mode uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID and does not use username/password authentication. While `VERSION` remains 3.0.0, this remote mode is not part of the published 3.0.0 release.
+UniFi2MQTT 3.1.0 supports `transport: remote` operation through the Site Manager connector. Remote mode uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID and does not use username/password authentication.
 
 ## Multi-controller / multi-site mode
 

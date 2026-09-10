@@ -75,7 +75,7 @@ https://api.ui.com/v1/connector/consoles/<host_id>/proxy/network/integration/v1/
 
 The Site Manager site identifier returned by `/v1/sites` is deliberately not substituted for the Network Integration site UUID. UniFi2MQTT resolves the Network site through the connector itself before listing devices. Remote transport always uses verified HTTPS; the local `verify_ssl` / `allow_insecure_http` switches do not weaken the cloud connector.
 
-Example source configuration:
+Example remote configuration:
 
 ```yaml
 transport: remote
@@ -84,7 +84,7 @@ site_id: auto
 api_key: YOUR_SITE_MANAGER_API_KEY
 ```
 
-This connector transport is **unreleased source work** while `VERSION` remains `3.0.0`; it is not part of the published 3.0.0 release.
+Site Manager connector transport is included in **UniFi2MQTT 3.1.0**.
 
 ### Multi-controller / multi-site mode
 
