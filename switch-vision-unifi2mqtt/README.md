@@ -4,13 +4,15 @@ Optional read-only UniFi Network API bridge for Switch Vision.
 
 ## Single-controller mode
 
-Existing installs continue to use the established fields:
+Existing installs continue to use the established local fields. `transport` defaults to `local`:
 
 - `controller_url`
 - `api_key`
 - `site_id` (`auto` by default)
 
-When `controllers` is empty, the launcher transfers directly to the existing single-controller runtime so current MQTT topics, Home Assistant unique IDs, snapshots and retirement behaviour remain unchanged.
+The Home Assistant app options now include the optional `api_key` entry so the field is available in the app configuration UI. When `controllers` is empty, the launcher transfers directly to the existing single-controller runtime so current MQTT topics, Home Assistant unique IDs, snapshots and retirement behaviour remain unchanged.
+
+Development source also supports unreleased `transport: remote` operation through the Site Manager connector. Remote mode uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID and does not use username/password authentication. While `VERSION` remains 3.0.0, this remote mode is not part of the published 3.0.0 release.
 
 ## Multi-controller / multi-site mode
 
@@ -19,10 +21,12 @@ Set `controllers` to a non-empty list to poll several reachable UniFi controller
 Each entry has:
 
 - `id` — stable operator label used to derive an opaque internal namespace; the label itself stays in app configuration/private state;
-- `controller_url` — local/reachable UniFi Network origin;
-- `api_key` — local Integration API key for that controller;
-- optional `site_id` — defaults to `auto` and can also be a site UUID, exact name or internal reference;
-- optional TLS controls.
+- optional `transport` — `local` by default or `remote` for Site Manager connector access;
+- `controller_url` — required for local transport and ignored for remote transport;
+- optional `host_id` — Site Manager host selector for remote transport, default `auto`;
+- `api_key` — local Integration API key or Site Manager API key according to transport;
+- optional `site_id` — defaults to `auto` and can also be a Network site UUID, exact name or internal reference;
+- optional TLS controls for local transport.
 
 Example:
 
@@ -38,7 +42,7 @@ controllers:
     site_id: Branch Office
 ```
 
-The same controller can appear more than once with different site selections. Remote controllers must already be reachable from Home Assistant, for example over a site-to-site VPN. Cloud API access is not implemented by this feature.
+The same controller can appear more than once with different site selections. Local-mode remote controllers must already be reachable from Home Assistant, for example over a site-to-site VPN. Remote transport can instead use the Site Manager connector over verified HTTPS.
 
 Multi-controller mode isolates each controller's previous snapshot, empty-set confirmation and retirement state under the app-private persistent `/data/multi_controller_state/` area, then writes a collision-safe aggregate to `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery. A failed controller preserves its previous private snapshot and is marked unavailable without retiring devices from healthy controllers.
 

@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
-import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import classic_port_probe as probe
+import unifi2mqtt as core
 from controller_config import (
     load_raw_options,
     multi_controller_enabled,
@@ -17,32 +17,19 @@ from controller_config import (
 
 def _probe_entry(entry: dict[str, Any]) -> dict[str, Any]:
     result = probe.base_result()
+    result["transport"] = str(entry.get("transport") or "local")
     try:
-        context = ssl.create_default_context()
-        if not bool(entry.get("verify_ssl", True)):
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-
+        client = core.client_from_config(entry)
         result["stage"] = "site_resolution"
-        sites_payload = probe.request_json(
-            str(entry["controller_url"]),
-            "/proxy/network/integration/v1/sites",
-            str(entry["api_key"]),
-            context,
-        )
-        site = probe.select_site(
-            probe.parse_sites(sites_payload),
-            str(entry.get("site_id") or "auto"),
-        )
+        site = client.resolve_site()
         site_ref = str(site.get("internalReference") or "").strip()
+        if not site_ref:
+            raise probe.ProbeError("site_reference_unavailable")
 
         result["stage"] = "classic_port_statistics"
-        classic_payload = probe.request_json(
-            str(entry["controller_url"]),
+        classic_payload = client._get(
             "/proxy/network/api/s/"
-            f"{quote(site_ref, safe='')}/stat/device",
-            str(entry["api_key"]),
-            context,
+            f"{quote(site_ref, safe='')}/stat/device"
         )
         rows = probe.parse_classic_devices(classic_payload)
         result.update(probe.summarize_classic_devices(rows))
@@ -52,6 +39,9 @@ def _probe_entry(entry: dict[str, Any]) -> dict[str, Any]:
     except probe.ProbeError as exc:
         result["status"] = "unavailable"
         result["error_type"] = exc.code
+    except RuntimeError:
+        result["status"] = "unavailable"
+        result["error_type"] = "network_api_unavailable"
     except Exception:
         result["status"] = "unavailable"
         result["error_type"] = "unexpected_probe_error"

@@ -242,6 +242,118 @@ def main() -> int:
             "ambiguous automatic site selection was accepted"
         )
 
+    # Unreleased remote transport: Site Manager host discovery is distinct from
+    # the Network Integration site UUID used by connector device paths.
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return None
+        def read(self, _limit=-1):
+            return self.payload
+
+    remote_urls = []
+    remote_headers = []
+    remote_site_id = "network-site-uuid"
+    site_manager_site_id = "site-manager-site-id-MUST-NOT-BE-USED"
+    host_id = "console-host-id"
+
+    def remote_urlopen(request, **_kwargs):
+        url = request.full_url
+        remote_urls.append(url)
+        remote_headers.append(dict(request.header_items()))
+        if url == "https://api.ui.com/v1/hosts?pageSize=100":
+            return FakeResponse({
+                "data": [
+                    {
+                        "id": host_id,
+                        "type": "console",
+                        "userData": {"controllers": ["network", "protect"]},
+                    }
+                ]
+            })
+        if url.endswith("/proxy/network/integration/v1/sites"):
+            return FakeResponse({
+                "data": [
+                    {
+                        "id": remote_site_id,
+                        "internalReference": "default",
+                        "name": "Remote Network",
+                        "siteId": site_manager_site_id,
+                    }
+                ]
+            })
+        if url.endswith(f"/proxy/network/integration/v1/sites/{remote_site_id}/devices"):
+            return FakeResponse({"data": []})
+        raise AssertionError(url)
+
+    old_urlopen = m.urlopen
+    m.urlopen = remote_urlopen
+    try:
+        remote = m.UniFiClient(
+            "https://ignored.local",
+            "auto",
+            "site-manager-key",
+            False,
+            True,
+            "remote",
+            "auto",
+        )
+        assert remote.resolve_host_id() == host_id
+        assert remote.resolve_site_id() == remote_site_id
+        assert remote.list_devices() == []
+    finally:
+        m.urlopen = old_urlopen
+
+    connector_prefix = f"https://api.ui.com/v1/connector/consoles/{host_id}"
+    assert remote_urls == [
+        "https://api.ui.com/v1/hosts?pageSize=100",
+        connector_prefix + "/proxy/network/integration/v1/sites",
+        connector_prefix + f"/proxy/network/integration/v1/sites/{remote_site_id}/devices",
+    ]
+    assert all(site_manager_site_id not in url for url in remote_urls)
+    assert "https://api.ui.com/v1/sites" not in remote_urls
+    assert all(headers.get("X-api-key") == "site-manager-key" for headers in remote_headers)
+
+    # Auto host selection fails closed when Site Manager exposes more than one
+    # Network-capable console; an explicit host ID resolves exactly one.
+    multi_host = m.UniFiClient("", "auto", "key", True, False, "remote", "auto")
+    multi_host._get = lambda path, network=True: {
+        "data": [
+            {"id": "host-a", "type": "console", "userData": {"controllers": ["network"]}},
+            {"id": "host-b", "type": "console", "userData": {"controllers": ["network"]}},
+        ]
+    }
+    try:
+        multi_host.resolve_host_id()
+    except RuntimeError as exc:
+        assert "Multiple usable UniFi Network hosts" in str(exc)
+    else:
+        raise AssertionError("ambiguous Site Manager host selection was accepted")
+
+    explicit_host = m.UniFiClient("", "auto", "key", True, False, "remote", "host-b")
+    explicit_paths = []
+    def explicit_get(path, network=True):
+        explicit_paths.append((path, network))
+        return {
+            "data": {
+                "id": "host-b",
+                "type": "ucore",
+                "userData": {"permissions": {"network.management": ["admin"]}},
+            }
+        }
+    explicit_host._get = explicit_get
+    assert explicit_host.resolve_host_id() == "host-b"
+    assert explicit_paths == [("/v1/hosts/host-b", False)]
+
+    # Auto discovery accepts current documented host types even when optional
+    # Site Manager capability metadata differs by console generation.
+    assert m.UniFiClient._network_console({"id": "u", "type": "ucore"}) is True
+    assert m.UniFiClient._network_console({"id": "n", "type": "network-server"}) is True
+    assert m.UniFiClient._network_console({"id": "b", "type": "ucore", "isBlocked": True}) is False
+
     # Support My Switch contribution SV-2026-000002.
     assert m.is_switch({
         "features": ["switching"],
