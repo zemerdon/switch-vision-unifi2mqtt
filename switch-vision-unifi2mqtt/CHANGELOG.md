@@ -2,14 +2,15 @@
 
 ## Unreleased
 
-- Add a source-only `local` / `remote` UniFi API transport selector while preserving `local` as the compatibility default.
+## v3.1.0
+
+- Add a `local` / `remote` UniFi API transport selector while preserving `local` as the compatibility default.
 - Add the missing `api_key` entry to Home Assistant app `options` so API-key configuration is visible in the app UI.
 - Add Site Manager remote transport using `X-API-Key`, `/v1/hosts` host discovery and `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/...`; no username/password authentication is introduced.
 - Resolve the actual Network Integration site through the connector and explicitly keep the separate Site Manager `/v1/sites` identifier out of Network device paths.
 - Reuse the common transport for the classic read-only per-port capability probe and multi-controller entries.
 - Keep cloud connector TLS verification mandatory and preserve existing local TLS / HTTP opt-in behavior.
 - Keep `per_port_traffic` false unless UniFi2MQTT has a deterministic device/port join and actually publishes normalized per-port RX/TX counters; aggregate gateway/uplink traffic and mere `statistics.interfaces` presence never enable per-port Activity LEDs.
-- This section is unreleased; the published release remains v3.0.0.
 
 ## v3.0.0
 
