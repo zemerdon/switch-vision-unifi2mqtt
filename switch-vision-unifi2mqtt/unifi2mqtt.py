@@ -719,7 +719,10 @@ def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dic
         },
         "api_capabilities": {
             "port_detail": bool(ports),
-            "per_port_traffic": bool(stats.get("interfaces")),
+            # Do not advertise per-port traffic until UniFi2MQTT has a
+            # deterministic device/port join and publishes normalized per-port
+            # RX/TX counters. An API `interfaces` object by itself is not proof.
+            "per_port_traffic": False,
         },
     }
 

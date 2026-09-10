@@ -406,13 +406,21 @@ def main() -> int:
             {"idx": 11, "state": "UP", "connector": "SFPPLUS", "maxSpeedMbps": 10000, "speedMbps": 10000},
         ]},
     }
-    udm_n = m.normalize_device(udm, udm, stats)
+    udm_stats = {
+        **stats,
+        "interfaces": {"ports": [
+            {"idx": 1, "rx_bytes": 111, "tx_bytes": 222},
+            {"idx": 9, "rx_bytes": 333, "tx_bytes": 444},
+        ]},
+    }
+    udm_n = m.normalize_device(udm, udm, udm_stats)
     assert udm_n["model"] == "UDM Pro"
     assert udm_n["ports"][0]["state"] == "DOWN"
     assert udm_n["ports"][0]["speed_mbps"] is None
     assert udm_n["ports"][1]["speed_mbps"] == 1000
     assert udm_n["ports"][2]["connector"] == "SFPPLUS"
     assert udm_n["ports"][3]["connector"] == "SFPPLUS"
+    assert udm_n["api_capabilities"]["per_port_traffic"] is False
 
     old = dict(detail)
     old["interfaces"] = ["ports"]
@@ -586,6 +594,13 @@ def main() -> int:
     assert topics[f"{base}/port/2/status"] == "OFF"
     assert f"{base}/port/2/speed" not in topics
     assert topics[f"{base}/port/2/poe_active"] == "OFF"
+    # Uplink aggregate traffic is valid system telemetry, but no per-port RX/TX
+    # state/discovery topics exist until a deterministic live counter contract
+    # is implemented. This keeps Core activity LEDs link-only/off for UniFi.
+    assert not any(
+        topic.startswith(f"{base}/port/") and ("/rx" in topic or "/tx" in topic)
+        for topic in topics
+    )
 
     discovery_topic = "homeassistant/sensor/switch_vision_unifi_garage_switch_1_model/config"
     discovery = json.loads(topics[discovery_topic])

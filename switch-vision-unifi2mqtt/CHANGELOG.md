@@ -8,6 +8,7 @@
 - Resolve the actual Network Integration site through the connector and explicitly keep the separate Site Manager `/v1/sites` identifier out of Network device paths.
 - Reuse the common transport for the classic read-only per-port capability probe and multi-controller entries.
 - Keep cloud connector TLS verification mandatory and preserve existing local TLS / HTTP opt-in behavior.
+- Keep `per_port_traffic` false unless UniFi2MQTT has a deterministic device/port join and actually publishes normalized per-port RX/TX counters; aggregate gateway/uplink traffic and mere `statistics.interfaces` presence never enable per-port Activity LEDs.
 - This section is unreleased; the published release remains v3.0.0.
 
 ## v3.0.0
