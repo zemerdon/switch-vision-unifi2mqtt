@@ -99,6 +99,25 @@ def main() -> int:
     assert cfg["poll_interval"] == "30"
     assert cfg["mqtt_topic_prefix"] == "switch_vision/unifi"
 
+    assert cfg["transport"] == "local"
+    assert cfg["host_id"] == "auto"
+
+    remote_cfg = load_cfg(
+        m,
+        config_payload(
+            transport="remote",
+            controller_url="",
+            host_id="console-123",
+            verify_ssl="false",
+            allow_insecure_http="true",
+        ),
+    )
+    assert remote_cfg["transport"] == "remote"
+    assert remote_cfg["controller_url"] == m.REMOTE_API_BASE
+    assert remote_cfg["host_id"] == "console-123"
+    assert remote_cfg["verify_ssl"] is True
+    assert remote_cfg["allow_insecure_http"] is False
+
     expect_config_failure(m, config_payload(controller_url="ftp://192.0.2.1"), "absolute http:// or https://")
     expect_config_failure(
         m,
@@ -272,7 +291,12 @@ def main() -> int:
     config_text = (app_dir / "config.yaml").read_text(encoding="utf-8")
     run_text = (app_dir / "run.sh").read_text(encoding="utf-8")
     assert 'verify_ssl: "true"' in config_text
+    assert 'transport: "local"' in config_text
+    assert 'host_id: "auto"' in config_text
     assert 'site_id: "auto"' in config_text
+    assert 'api_key: null' in config_text
+    assert 'transport: list(local|remote)' in config_text
+    assert 'api_key: password?' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
     print(f"Switch Vision UniFi2MQTT v{m.VERSION} hardening regression: PASS")

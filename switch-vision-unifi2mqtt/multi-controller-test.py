@@ -135,6 +135,40 @@ def test_controller_config_validation() -> None:
         raise AssertionError("unsafe controller id was accepted")
 
 
+def test_remote_controller_entry_uses_site_manager_connector_transport() -> None:
+    rows = parse_controller_entries(
+        {
+            "verify_ssl": "false",
+            "allow_insecure_http": "true",
+            "controllers": [
+                {
+                    "id": "cloud",
+                    "transport": "remote",
+                    "controller_url": "http://must-be-ignored.invalid",
+                    "host_id": "console-host",
+                    "site_id": "auto",
+                    "api_key": "cloud-secret",
+                }
+            ],
+        }
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["transport"] == "remote"
+    assert row["controller_url"] == core.REMOTE_API_BASE
+    assert row["host_id"] == "console-host"
+    assert row["site_id"] == "auto"
+    assert row["verify_ssl"] is True
+    assert row["allow_insecure_http"] is False
+
+    from controller_config import runtime_config
+    cfg = runtime_config(global_cfg(), row)
+    assert cfg["transport"] == "remote"
+    assert cfg["host_id"] == "console-host"
+    assert cfg["controller_url"] == core.REMOTE_API_BASE
+    assert cfg["api_key"] == "cloud-secret"
+
+
 def test_namespaced_publisher_identity() -> None:
     namespace = controller_namespace("remote")
     publisher = NamespacedPublisher.__new__(NamespacedPublisher)
@@ -359,6 +393,7 @@ def test_unsafe_stored_controller_namespace_fails_closed() -> None:
 
 def main() -> int:
     test_controller_config_validation()
+    test_remote_controller_entry_uses_site_manager_connector_transport()
     test_namespaced_publisher_identity()
     test_two_controllers_with_same_device_id_do_not_collide()
     test_failed_controller_preserves_snapshot_and_marks_it_offline()
