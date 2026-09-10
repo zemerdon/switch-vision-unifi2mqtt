@@ -136,9 +136,9 @@ The current UniFi API provides reliable link, negotiated speed, connector, PoE a
 
 ## Activity LEDs
 
-Switch Vision per-port Activity LEDs require per-port RX/TX traffic data. UniFi2MQTT also performs a read-only, non-fatal capability probe against the local classic Network API to determine whether candidate per-port byte counters exist. Probe results are privacy-safe and do not store raw controller payloads.
+Switch Vision per-port Activity LEDs require per-port RX/TX traffic data. UniFi2MQTT also performs a read-only, non-fatal capability probe against the classic Network API to determine whether candidate per-port byte counters exist. Probe results are privacy-safe and do not store raw controller payloads.
 
-Where reliable per-port traffic is unavailable, SNMP remains the supported activity source. UniFi-only installations still provide supported port link state, negotiated speed, connector, PoE and system telemetry.
+The probe is evidence-only: candidate counter fields, an API `interfaces` object, or aggregate gateway/uplink rates do not enable `per_port_traffic`. That capability remains false until a deterministic device/port join is proven and UniFi2MQTT actually publishes normalized per-port RX/TX counters. Where reliable per-port traffic is unavailable, SNMP remains the supported activity source. UniFi-only installations still provide supported port link state, negotiated speed, connector, PoE and system telemetry.
 
 ## Validation
 
