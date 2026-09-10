@@ -1,7 +1,7 @@
 name: Switch Vision UniFi2MQTT
 version: "3.0.0"
 slug: switch_vision_unifi2mqtt
-description: Read-only multi-controller UniFi Network bridge to MQTT for Switch Vision, with privacy-safe local capability diagnostics.
+description: Read-only multi-controller UniFi Network bridge to MQTT for Switch Vision, with privacy-safe capability diagnostics.
 url: https://github.com/zemerdon/switch-vision-unifi2mqtt
 arch:
   - aarch64
@@ -15,8 +15,11 @@ map:
 services:
   - mqtt:need
 options:
+  transport: "local"
   controller_url: "https://192.168.1.1"
+  host_id: "auto"
   site_id: "auto"
+  api_key: null
   verify_ssl: "true"
   allow_insecure_http: "false"
   controllers: []
@@ -31,14 +34,18 @@ options:
   mqtt_topic_prefix: "switch_vision/unifi"
   mqtt_discovery_prefix: "homeassistant"
 schema:
-  controller_url: str
-  site_id: str
+  transport: list(local|remote)
+  controller_url: str?
+  host_id: str?
+  site_id: str?
   api_key: password?
   verify_ssl: list(false|true)
   allow_insecure_http: list(false|true)
   controllers:
     - id: str
-      controller_url: str
+      transport: list(local|remote)?
+      controller_url: str?
+      host_id: str?
       site_id: str?
       api_key: password
       verify_ssl: list(false|true)?

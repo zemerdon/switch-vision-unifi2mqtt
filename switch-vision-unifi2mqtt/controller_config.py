@@ -82,16 +82,10 @@ def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
             )
         namespaces.add(namespace)
 
-        allow_http = core.truthy(
-            raw.get("allow_insecure_http", data.get("allow_insecure_http", False))
-        )
-        controller_url = core.validate_controller_url(
-            raw.get("controller_url"),
-            allow_http,
-        )
-
-        site_id = str(raw.get("site_id") or "auto").strip()
+        transport = core.validate_transport(raw.get("transport", "local"))
         api_key = str(raw.get("api_key") or "").strip()
+        site_id = str(raw.get("site_id") or "auto").strip() or "auto"
+        host_id = core.validate_host_id(raw.get("host_id", "auto"))
         if core._has_control_chars(site_id) or len(site_id) > 256:
             raise RuntimeError(f"controllers entry {position} site_id is invalid or too long")
         if not api_key:
@@ -99,14 +93,27 @@ def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
         if core._has_control_chars(api_key) or len(api_key) > 4096:
             raise RuntimeError(f"controllers entry {position} api_key is invalid or too long")
 
+        if transport == "local":
+            allow_http = core.truthy(
+                raw.get("allow_insecure_http", data.get("allow_insecure_http", False))
+            )
+            controller_url = core.validate_controller_url(raw.get("controller_url"), allow_http)
+            verify_ssl = core.truthy(raw.get("verify_ssl", data.get("verify_ssl", True)))
+        else:
+            controller_url = core.REMOTE_API_BASE
+            allow_http = False
+            verify_ssl = True
+
         entries.append(
             {
                 "id": controller_id,
                 "namespace": namespace,
+                "transport": transport,
                 "controller_url": controller_url,
+                "host_id": host_id,
                 "site_id": site_id,
                 "api_key": api_key,
-                "verify_ssl": core.truthy(raw.get("verify_ssl", data.get("verify_ssl", True))),
+                "verify_ssl": verify_ssl,
                 "allow_insecure_http": allow_http,
             }
         )
@@ -195,7 +202,9 @@ def runtime_config(global_cfg: dict[str, Any], entry: dict[str, Any]) -> dict[st
     cfg.pop("controllers", None)
     cfg.update(
         {
+            "transport": entry["transport"],
             "controller_url": entry["controller_url"],
+            "host_id": entry["host_id"],
             "site_id": entry["site_id"],
             "api_key": entry["api_key"],
             "verify_ssl": entry["verify_ssl"],

@@ -24,6 +24,8 @@ VERSION = "3.0.0"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
+REMOTE_API_BASE = "https://api.ui.com"
+VALID_TRANSPORTS = {"local", "remote"}
 
 
 def handle_stop(_signum: int, _frame: Any) -> None:
@@ -65,6 +67,81 @@ def validate_controller_url(value: Any, allow_insecure_http: bool = False) -> st
     return text
 
 
+def validate_transport(value: Any) -> str:
+    transport = str(value or "local").strip().lower()
+    if transport not in VALID_TRANSPORTS:
+        raise RuntimeError("transport must be local or remote")
+    return transport
+
+
+def validate_host_id(value: Any) -> str:
+    host_id = str(value or "auto").strip() or "auto"
+    if len(host_id) > 256 or _has_control_chars(host_id):
+        raise RuntimeError("host_id contains invalid characters or is too long")
+    return host_id
+
+
+def response_rows(payload: Any, keys: tuple[str, ...], label: str) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = None
+        for key in keys:
+            if isinstance(payload.get(key), list):
+                rows = payload[key]
+                break
+        if rows is None:
+            raise RuntimeError(f"Unexpected {label} response")
+    else:
+        raise RuntimeError(f"Unexpected {label} response")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def select_network_site(sites: list[dict[str, Any]], requested: Any) -> dict[str, Any]:
+    usable = [site for site in sites if str(site.get("id") or "").strip()]
+    if not usable:
+        raise RuntimeError("UniFi Network API returned no sites")
+
+    requested_text = str(requested or "auto").strip() or "auto"
+    requested_key = requested_text.casefold()
+
+    def site_id(site: dict[str, Any]) -> str:
+        return str(site.get("id") or "").strip()
+
+    def internal_reference(site: dict[str, Any]) -> str:
+        return str(site.get("internalReference") or "").strip()
+
+    def name(site: dict[str, Any]) -> str:
+        return str(site.get("name") or "").strip()
+
+    if requested_key in {"auto", "default"}:
+        defaults = [
+            site for site in usable
+            if internal_reference(site).casefold() == "default"
+            or name(site).casefold() == "default"
+        ]
+        if len(defaults) == 1:
+            return defaults[0]
+        if len(usable) == 1:
+            return usable[0]
+        raise RuntimeError(
+            "Multiple UniFi Network sites were returned; configure site_id with "
+            "the required Network Integration site UUID, internal reference, or exact site name"
+        )
+
+    matches = [
+        site for site in usable
+        if site_id(site) == requested_text
+        or internal_reference(site).casefold() == requested_key
+        or name(site).casefold() == requested_key
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise RuntimeError("Configured site_id did not match any UniFi Network Integration site")
+    raise RuntimeError("Configured site_id matched multiple UniFi Network Integration sites")
+
+
 def validate_topic_prefix(name: str, value: Any) -> str:
     text = str(value or "").strip().strip("/")
     if not text:
@@ -95,6 +172,8 @@ def load_config(path: Path) -> dict[str, Any]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Could not read app configuration: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("App configuration must be a JSON object")
 
     # run.sh resolves Home Assistant's MQTT service and exports the effective
     # broker values. Explicit custom brokers are exported unchanged.
@@ -108,29 +187,39 @@ def load_config(path: Path) -> dict[str, Any]:
         if env_name in os.environ:
             data[key] = os.environ[env_name]
 
-    required = ["controller_url", "api_key"]
-    missing = [
-        key
-        for key in required
-        if data.get(key) is None or not str(data.get(key, "")).strip()
-    ]
-    if missing:
-        raise RuntimeError("Missing required configuration: " + ", ".join(missing))
+    api_key = str(data.get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("Missing required configuration: api_key")
+    if _has_control_chars(api_key) or len(api_key) > 4096:
+        raise RuntimeError("api_key contains invalid characters or is too long")
+
+    transport = validate_transport(data.get("transport", "local"))
+    site_id = str(data.get("site_id") or "auto").strip() or "auto"
+    if _has_control_chars(site_id) or len(site_id) > 256:
+        raise RuntimeError("site_id contains invalid characters or is too long")
+
+    data["transport"] = transport
+    data["api_key"] = api_key
+    data["site_id"] = site_id
+    data["host_id"] = validate_host_id(data.get("host_id", "auto"))
+
+    if transport == "local":
+        if data.get("controller_url") is None or not str(data.get("controller_url") or "").strip():
+            raise RuntimeError("Missing required configuration: controller_url")
+        data["allow_insecure_http"] = truthy(data.get("allow_insecure_http", False))
+        data["controller_url"] = validate_controller_url(
+            data["controller_url"], data["allow_insecure_http"]
+        )
+        data["verify_ssl"] = truthy(data.get("verify_ssl", True))
+    else:
+        # Remote transport is always the official Site Manager connector over
+        # verified HTTPS. controller_url is deliberately ignored in this mode.
+        data["controller_url"] = REMOTE_API_BASE
+        data["allow_insecure_http"] = False
+        data["verify_ssl"] = True
 
     if data.get("mqtt_host") is None or not str(data.get("mqtt_host", "")).strip():
         raise RuntimeError("Missing required configuration: mqtt_host")
-
-    data["allow_insecure_http"] = truthy(data.get("allow_insecure_http", False))
-    data["controller_url"] = validate_controller_url(
-        data["controller_url"],
-        data["allow_insecure_http"],
-    )
-    data["site_id"] = str(data.get("site_id") or "auto").strip()
-    data["api_key"] = str(data["api_key"]).strip()
-    if _has_control_chars(data["site_id"]) or len(data["site_id"]) > 256:
-        raise RuntimeError("site_id contains invalid characters or is too long")
-    if _has_control_chars(data["api_key"]) or len(data["api_key"]) > 4096:
-        raise RuntimeError("api_key contains invalid characters or is too long")
     data["mqtt_host"] = str(data["mqtt_host"]).strip()
     if _has_control_chars(data["mqtt_host"]):
         raise RuntimeError("mqtt_host contains control characters")
@@ -183,22 +272,49 @@ class UniFiClient:
         api_key: str,
         verify_ssl: bool,
         allow_insecure_http: bool = False,
+        transport: str = "local",
+        host_id: str = "auto",
     ) -> None:
-        self.base = validate_controller_url(base_url, allow_insecure_http)
-        self.requested_site_id = site_id.strip() or "auto"
+        self.transport = validate_transport(transport)
+        self.base = (
+            validate_controller_url(base_url, allow_insecure_http)
+            if self.transport == "local"
+            else REMOTE_API_BASE
+        )
+        self.requested_site_id = str(site_id or "auto").strip() or "auto"
         self.site_id = ""
-        self.api_key = api_key.strip()
+        self.site: dict[str, Any] | None = None
+        self.api_key = str(api_key or "").strip()
+        self.requested_host_id = validate_host_id(host_id)
+        self.host_id = ""
+        if not self.api_key:
+            raise RuntimeError("api_key is required")
         self.context = ssl.create_default_context()
-        if not verify_ssl:
+        if self.transport == "local" and not verify_ssl:
             if self.base.startswith("https://"):
                 logging.warning("UniFi TLS certificate verification is disabled by configuration.")
             self.context.check_hostname = False
             self.context.verify_mode = ssl.CERT_NONE
 
-    def _get(self, path: str) -> Any:
+    def _request_url(self, path: str, *, network: bool = True) -> str:
+        if not path.startswith("/"):
+            raise RuntimeError("UniFi API path must start with /")
+        if self.transport == "remote" and network:
+            host_id = self.resolve_host_id()
+            return (
+                f"{REMOTE_API_BASE}/v1/connector/consoles/{quote(host_id, safe='')}"
+                f"{path}"
+            )
+        return self.base + path
+
+    def _get(self, path: str, *, network: bool = True) -> Any:
         req = Request(
-            self.base + path,
-            headers={"Accept": "application/json", "X-API-KEY": self.api_key, "User-Agent": f"Switch-Vision-UniFi2MQTT/{VERSION}"},
+            self._request_url(path, network=network),
+            headers={
+                "Accept": "application/json",
+                "X-API-Key": self.api_key,
+                "User-Agent": f"Switch-Vision-UniFi2MQTT/{VERSION}",
+            },
             method="GET",
         )
         try:
@@ -211,214 +327,195 @@ class UniFiClient:
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise RuntimeError("UniFi API returned invalid JSON") from exc
         except HTTPError as exc:
-            # Do not copy controller response bodies into logs; they may contain
-            # operational or credential-adjacent information.
             if exc.code in {401, 403}:
+                credential = (
+                    "Site Manager API key"
+                    if self.transport == "remote"
+                    else "local UniFi Network Integration API key"
+                )
                 raise RuntimeError(
-                    f"UniFi API HTTP {exc.code}: authentication/authorization "
-                    "failed; verify a local UniFi Network Integration API key"
+                    f"UniFi API HTTP {exc.code}: authentication/authorization failed; verify the {credential}"
                 ) from exc
-            raise RuntimeError(
-                f"UniFi API HTTP {exc.code}: request failed"
-            ) from exc
+            raise RuntimeError(f"UniFi API HTTP {exc.code}: request failed") from exc
         except URLError as exc:
             raise RuntimeError(f"UniFi API connection failed: {exc.reason}") from exc
 
-    def list_sites(self) -> list[dict[str, Any]]:
-        payload = self._get(
-            "/proxy/network/integration/v1/sites"
-        )
+    @staticmethod
+    def _network_console(host: dict[str, Any]) -> bool:
+        if bool(host.get("isBlocked")):
+            return False
+        host_type = str(host.get("type") or "").strip().casefold()
+        if host_type == "network-server":
+            return True
+        if host_type not in {"console", "ucore"}:
+            return False
 
-        if isinstance(payload, list):
-            rows = payload
+        # Site Manager explicitly allows userData/reportedState to vary by
+        # console generation. Treat Network hints as positive evidence, but do
+        # not make any one optional field a hard dependency. The connector's
+        # Network Integration sites request remains the final capability check.
+        user_data = host.get("userData") if isinstance(host.get("userData"), dict) else {}
+        permissions = user_data.get("permissions")
+        if isinstance(permissions, dict) and any(
+            str(key).strip().casefold().startswith("network.") for key in permissions
+        ):
+            return True
+
+        def contains_network(values: Any) -> bool:
+            if not isinstance(values, list):
+                return False
+            for value in values:
+                if isinstance(value, str) and value.strip().casefold() == "network":
+                    return True
+                if isinstance(value, dict):
+                    for key in ("name", "id", "type", "application", "controller"):
+                        if str(value.get(key) or "").strip().casefold() == "network":
+                            return True
+            return False
+
+        reported = host.get("reportedState") if isinstance(host.get("reportedState"), dict) else {}
+        if contains_network(user_data.get("apps")) or contains_network(reported.get("apps")):
+            return True
+        if contains_network(reported.get("controllers")):
+            return True
+        return True
+
+    @staticmethod
+    def _host_from_payload(payload: Any) -> dict[str, Any]:
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            row = payload["data"]
         elif isinstance(payload, dict):
-            rows = None
-
-            for key in ("data", "sites"):
-                if isinstance(payload.get(key), list):
-                    rows = payload[key]
-                    break
-
-            if rows is None:
-                raise RuntimeError(
-                    "Unexpected List Local Sites response"
-                )
+            row = payload
         else:
-            raise RuntimeError(
-                "Unexpected List Local Sites response"
-            )
+            raise RuntimeError("Unexpected Site Manager host response")
+        if not str(row.get("id") or "").strip():
+            raise RuntimeError("Site Manager host response did not contain an ID")
+        return row
 
+    def list_hosts(self) -> list[dict[str, Any]]:
+        if self.transport != "remote":
+            return []
+        hosts: list[dict[str, Any]] = []
+        next_token = ""
+        seen_tokens: set[str] = set()
+        for _page in range(20):
+            path = "/v1/hosts?pageSize=100"
+            if next_token:
+                path += "&nextToken=" + quote(next_token, safe="")
+            payload = self._get(path, network=False)
+            hosts.extend(
+                row for row in response_rows(payload, ("data", "hosts"), "Site Manager hosts")
+                if str(row.get("id") or "").strip() and self._network_console(row)
+            )
+            if not isinstance(payload, dict):
+                break
+            meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+            token = str(payload.get("nextToken") or meta.get("nextToken") or "").strip()
+            if not token:
+                break
+            if token in seen_tokens:
+                raise RuntimeError("Site Manager host pagination repeated a token")
+            seen_tokens.add(token)
+            next_token = token
+        else:
+            raise RuntimeError("Site Manager host pagination exceeded the safety limit")
+        return hosts
+
+    def resolve_host_id(self) -> str:
+        if self.transport != "remote":
+            return ""
+        if self.host_id:
+            return self.host_id
+
+        requested = self.requested_host_id
+        if requested.casefold() != "auto":
+            payload = self._get(
+                "/v1/hosts/" + quote(requested, safe=""),
+                network=False,
+            )
+            selected = self._host_from_payload(payload)
+            if str(selected.get("id") or "").strip() != requested:
+                raise RuntimeError("Configured host_id did not match the returned Site Manager host")
+            if not self._network_console(selected):
+                raise RuntimeError("Configured host_id is not a usable UniFi Network host")
+        else:
+            hosts = self.list_hosts()
+            if len(hosts) == 1:
+                selected = hosts[0]
+            elif not hosts:
+                raise RuntimeError("Site Manager returned no usable UniFi Network hosts")
+            else:
+                raise RuntimeError(
+                    "Multiple usable UniFi Network hosts were returned; configure host_id with the required Site Manager host ID"
+                )
+
+        resolved = str(selected.get("id") or "").strip()
+        if not resolved:
+            raise RuntimeError("Resolved Site Manager host did not contain a usable host ID")
+        self.host_id = resolved
+        logging.info("Resolved UniFi Site Manager Network host.")
+        return resolved
+
+    def list_sites(self) -> list[dict[str, Any]]:
+        payload = self._get("/proxy/network/integration/v1/sites")
         return [
-            row
-            for row in rows
-            if isinstance(row, dict)
-            and str(row.get("id") or "").strip()
+            row for row in response_rows(payload, ("data", "sites"), "Network Integration sites")
+            if str(row.get("id") or "").strip()
         ]
 
-    def resolve_site_id(self) -> str:
-        if self.site_id:
-            return self.site_id
-
-        sites = self.list_sites()
-
-        if not sites:
-            raise RuntimeError(
-                "UniFi Network API returned no local sites"
-            )
-
-        requested = (
-            self.requested_site_id.strip()
-            or "auto"
-        )
-
-        requested_key = requested.casefold()
-
-        def site_id(site: dict[str, Any]) -> str:
-            return str(site.get("id") or "").strip()
-
-        def matches_default(
-            site: dict[str, Any],
-        ) -> bool:
-            internal_reference = str(
-                site.get("internalReference") or ""
-            ).strip().casefold()
-
-            name = str(
-                site.get("name") or ""
-            ).strip().casefold()
-
-            return (
-                internal_reference == "default"
-                or name == "default"
-            )
-
-        selected: dict[str, Any] | None = None
-
-        if requested_key in {"auto", "default"}:
-            defaults = [
-                site
-                for site in sites
-                if matches_default(site)
-            ]
-
-            if len(defaults) == 1:
-                selected = defaults[0]
-            elif len(sites) == 1:
-                selected = sites[0]
-            else:
-                raise RuntimeError(
-                    "Multiple UniFi Network sites were returned; "
-                    "configure site_id with the required site UUID, "
-                    "internal reference, or exact site name"
-                )
-        else:
-            matches = []
-
-            for site in sites:
-                current_id = site_id(site)
-
-                internal_reference = str(
-                    site.get("internalReference") or ""
-                ).strip()
-
-                name = str(
-                    site.get("name") or ""
-                ).strip()
-
-                if (
-                    current_id == requested
-                    or internal_reference.casefold()
-                    == requested_key
-                    or name.casefold() == requested_key
-                ):
-                    matches.append(site)
-
-            if len(matches) == 1:
-                selected = matches[0]
-            elif not matches:
-                raise RuntimeError(
-                    "Configured site_id did not match any "
-                    "local UniFi Network site"
-                )
-            else:
-                raise RuntimeError(
-                    "Configured site_id matched multiple "
-                    "local UniFi Network sites"
-                )
-
-        resolved = site_id(selected)
-
-        if not resolved:
-            raise RuntimeError(
-                "Resolved UniFi Network site did not "
-                "contain a usable site ID"
-            )
-
-        self.site_id = resolved
-
+    def resolve_site(self) -> dict[str, Any]:
+        if self.site is not None:
+            return self.site
+        self.site = select_network_site(self.list_sites(), self.requested_site_id)
+        self.site_id = str(self.site.get("id") or "").strip()
+        if not self.site_id:
+            raise RuntimeError("Resolved UniFi Network site did not contain a usable site ID")
         logging.info(
-            "Resolved UniFi Network local site."
+            "Resolved UniFi Network site through %s transport.", self.transport
         )
+        return self.site
 
-        return resolved
+    def resolve_site_id(self) -> str:
+        self.resolve_site()
+        return self.site_id
 
     def list_devices(self) -> list[dict[str, Any]]:
         site_id = self.resolve_site_id()
-
         payload = self._get(
             "/proxy/network/integration/v1/sites/"
             f"{quote(site_id, safe='')}/devices"
         )
-
-        if isinstance(payload, list):
-            return [
-                x
-                for x in payload
-                if isinstance(x, dict)
-            ]
-
-        if isinstance(payload, dict):
-            for key in ("data", "devices"):
-                if isinstance(payload.get(key), list):
-                    return [
-                        x
-                        for x in payload[key]
-                        if isinstance(x, dict)
-                    ]
-
-        raise RuntimeError(
-            "Unexpected List Adopted Devices response"
-        )
+        return response_rows(payload, ("data", "devices"), "List Adopted Devices")
 
     def detail(self, device_id: str) -> dict[str, Any]:
         site_id = self.resolve_site_id()
-
         payload = self._get(
             "/proxy/network/integration/v1/sites/"
             f"{quote(site_id, safe='')}/devices/"
             f"{quote(device_id, safe='')}"
         )
-
-        return (
-            payload
-            if isinstance(payload, dict)
-            else {}
-        )
+        return payload if isinstance(payload, dict) else {}
 
     def stats(self, device_id: str) -> dict[str, Any]:
         site_id = self.resolve_site_id()
-
         payload = self._get(
             "/proxy/network/integration/v1/sites/"
             f"{quote(site_id, safe='')}/devices/"
             f"{quote(device_id, safe='')}/statistics/latest"
         )
+        return payload if isinstance(payload, dict) else {}
 
-        return (
-            payload
-            if isinstance(payload, dict)
-            else {}
-        )
+
+def client_from_config(cfg: dict[str, Any]) -> UniFiClient:
+    return UniFiClient(
+        str(cfg.get("controller_url") or REMOTE_API_BASE),
+        str(cfg.get("site_id") or "auto"),
+        str(cfg.get("api_key") or ""),
+        truthy(cfg.get("verify_ssl", True)),
+        truthy(cfg.get("allow_insecure_http", False)),
+        validate_transport(cfg.get("transport", "local")),
+        validate_host_id(cfg.get("host_id", "auto")),
+    )
 
 
 NON_SWITCH_MODEL_PREFIXES = (
@@ -1307,13 +1404,7 @@ def _poll_once_unlocked(
     snapshot: Path,
     pub: Publisher,
 ) -> None:
-    api = UniFiClient(
-        str(cfg["controller_url"]),
-        str(cfg["site_id"]),
-        str(cfg["api_key"]),
-        truthy(cfg.get("verify_ssl", True)),
-        truthy(cfg.get("allow_insecure_http", False)),
-    )
+    api = client_from_config(cfg)
 
     try:
         pub.require_connected()
