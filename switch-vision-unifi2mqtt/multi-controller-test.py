@@ -6,8 +6,12 @@ import tempfile
 from pathlib import Path
 
 import unifi2mqtt as core
-from controller_config import controller_namespace, parse_controller_entries
-from multi_controller import NamespacedPublisher, poll_multi_once
+from controller_config import (
+    controller_namespace,
+    parse_controller_entries,
+    parse_single_connection_profiles,
+)
+from multi_controller import NamespacedPublisher, poll_multi_once, poll_single_with_failover
 
 
 def controller_rows() -> list[dict]:
@@ -391,6 +395,118 @@ def test_unsafe_stored_controller_namespace_fails_closed() -> None:
             raise AssertionError("unsafe stored controller namespace was accepted")
 
 
+def test_single_priority_profiles_keep_local_and_remote_credentials_separate() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_controller_url": "https://192.0.2.10:11443",
+            "local_site_id": "auto",
+            "local_api_key": "local-secret",
+            "local_verify_ssl": "false",
+            "remote_host_id": "console-1",
+            "remote_site_id": "auto",
+            "remote_api_key": "remote-secret",
+        }
+    )
+    assert priority == "local"
+    assert fallback == "remote"
+    assert [row["transport"] for row in profiles] == ["local", "remote"]
+    assert profiles[0]["controller_url"] == "https://192.0.2.10:11443"
+    assert profiles[0]["api_key"] == "local-secret"
+    assert profiles[1]["controller_url"] == core.REMOTE_API_BASE
+    assert profiles[1]["host_id"] == "console-1"
+    assert profiles[1]["api_key"] == "remote-secret"
+
+
+def test_single_configured_profile_becomes_effective_priority() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "transport": "local",
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_api_key": "",
+            "remote_api_key": "fixture-value",
+            "remote_host_id": "fixture-host",
+            "remote_site_id": "auto",
+        }
+    )
+    assert [row["transport"] for row in profiles] == ["remote"], profiles
+    assert priority == "remote", priority
+    assert fallback == "none", fallback
+
+
+def test_single_priority_fails_over_and_returns_to_priority() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_controller_url": "https://192.0.2.10:11443",
+            "local_api_key": "local-secret",
+            "remote_api_key": "remote-secret",
+            "remote_host_id": "auto",
+        }
+    )
+    publisher = FakePublisher()
+    attempts: list[str] = []
+    local_available = False
+
+    with tempfile.TemporaryDirectory() as temp:
+        snapshot = Path(temp) / "devices.json"
+
+        def fake_poller(cfg: dict, _snapshot: Path, _publisher: FakePublisher) -> None:
+            nonlocal local_available
+            transport = str(cfg["transport"])
+            attempts.append(transport)
+            if transport == "local" and not local_available:
+                raise RuntimeError("local unavailable")
+            core.write_snapshot(_snapshot, [sample_device("Switch")], 0)
+            core.write_diagnostics(
+                _snapshot,
+                status="success",
+                stage="complete",
+                devices=[],
+            )
+
+        active = poll_single_with_failover(
+            global_cfg(),
+            profiles,
+            snapshot,
+            publisher,
+            priority=priority,
+            fallback=fallback,
+            poller=fake_poller,
+        )
+        assert active == "remote"
+        assert attempts == ["local", "remote"]
+        diagnostics = json.loads(
+            (snapshot.parent / "diagnostics.json").read_text(encoding="utf-8")
+        )
+        assert diagnostics["active_transport"] == "remote"
+        assert diagnostics["failover_active"] is True
+        assert "local-secret" not in json.dumps(diagnostics)
+        assert "remote-secret" not in json.dumps(diagnostics)
+
+        attempts.clear()
+        local_available = True
+        active = poll_single_with_failover(
+            global_cfg(),
+            profiles,
+            snapshot,
+            publisher,
+            priority=priority,
+            fallback=fallback,
+            poller=fake_poller,
+        )
+        assert active == "local"
+        assert attempts == ["local"]
+        diagnostics = json.loads(
+            (snapshot.parent / "diagnostics.json").read_text(encoding="utf-8")
+        )
+        assert diagnostics["active_transport"] == "local"
+        assert diagnostics["failover_active"] is False
+
+
 def main() -> int:
     test_controller_config_validation()
     test_remote_controller_entry_uses_site_manager_connector_transport()
@@ -400,7 +516,10 @@ def main() -> int:
     test_removed_controller_is_retired_without_touching_current_controller()
     test_removed_controller_state_is_preserved_if_retirement_fails()
     test_unsafe_stored_controller_namespace_fails_closed()
-    print("multi-controller regression tests: PASS")
+    test_single_priority_profiles_keep_local_and_remote_credentials_separate()
+    test_single_configured_profile_becomes_effective_priority()
+    test_single_priority_fails_over_and_returns_to_priority()
+    print("multi-controller and priority/fallback regression tests: PASS")
     return 0
 
 

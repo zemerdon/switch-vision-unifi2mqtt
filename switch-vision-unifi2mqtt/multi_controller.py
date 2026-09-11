@@ -18,6 +18,7 @@ import unifi2mqtt as core
 from controller_config import (
     load_multi_config,
     load_raw_options,
+    load_single_connection_plan,
     multi_controller_enabled,
     runtime_config,
     scoped_device_id,
@@ -333,19 +334,162 @@ def poll_multi_once(
     return devices
 
 
-def _exec_legacy(config: Path, snapshot: Path) -> None:
-    script = Path(__file__).with_name("unifi2mqtt.py")
-    os.execv(
-        sys.executable,
-        [
-            sys.executable,
-            str(script),
-            "--config",
-            str(config),
-            "--snapshot",
-            str(snapshot),
-        ],
+def _annotate_single_connection_diagnostics(
+    snapshot: Path,
+    *,
+    priority: str,
+    fallback: str,
+    active: str,
+    attempted: list[str],
+) -> None:
+    """Add privacy-safe transport state to the public diagnostics payload."""
+    path = core.diagnostics_path_for_snapshot(snapshot)
+    payload = _read_json(path) or {}
+    payload.update(
+        {
+            "connection_mode": "priority_fallback",
+            "priority_transport": priority,
+            "fallback_transport": fallback,
+            "active_transport": active,
+            "failover_active": active != priority,
+            "transports_attempted": [
+                item for item in attempted if item in {"local", "remote"}
+            ],
+        }
     )
+    # No URLs, host ids, site ids or API keys are persisted here.
+    _secure_write_json(path, payload)
+
+
+def poll_single_with_failover(
+    global_cfg: dict[str, Any],
+    profiles: list[dict[str, Any]],
+    snapshot: Path,
+    publisher: core.Publisher,
+    *,
+    priority: str,
+    fallback: str,
+    poller: Callable[[dict[str, Any], Path, Any], None] = core.poll_once,
+) -> str:
+    """Try priority first on every poll, then the configured fallback."""
+    attempted: list[str] = []
+    failures: list[Exception] = []
+    for profile in profiles:
+        transport = str(profile.get("transport") or "local")
+        attempted.append(transport)
+        cfg = dict(global_cfg)
+        cfg.update(profile)
+        try:
+            poller(cfg, snapshot, publisher)
+            _annotate_single_connection_diagnostics(
+                snapshot,
+                priority=priority,
+                fallback=fallback,
+                active=transport,
+                attempted=attempted,
+            )
+            if transport != priority:
+                logging.warning(
+                    "UniFi priority transport %s is unavailable; using %s fallback.",
+                    priority,
+                    transport,
+                )
+            else:
+                logging.info("UniFi active transport: %s (priority).", transport)
+            return transport
+        except Exception as exc:
+            failures.append(exc)
+            logging.warning("UniFi %s transport poll failed: %s", transport, exc)
+
+    active = "none"
+    path = core.diagnostics_path_for_snapshot(snapshot)
+    payload = _read_json(path) or {
+        "schema_version": 1,
+        "product": "Switch Vision UniFi2MQTT",
+        "version": VERSION,
+        "generated_at": int(time.time()),
+        "status": "error",
+        "stage": "connection",
+    }
+    payload.update(
+        {
+            "status": "error",
+            "stage": "connection",
+            "connection_mode": "priority_fallback",
+            "priority_transport": priority,
+            "fallback_transport": fallback,
+            "active_transport": active,
+            "failover_active": False,
+            "transports_attempted": attempted,
+            "error_type": type(failures[-1]).__name__ if failures else "RuntimeError",
+        }
+    )
+    _secure_write_json(path, payload)
+    if failures:
+        raise RuntimeError("All configured UniFi connection paths failed") from failures[-1]
+    raise RuntimeError("No configured UniFi connection path is available")
+
+
+def _run_single_priority_fallback(config: Path, snapshot: Path) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    signal.signal(signal.SIGTERM, core.handle_stop)
+    signal.signal(signal.SIGINT, core.handle_stop)
+    try:
+        global_cfg, profiles, priority, fallback = load_single_connection_plan(config)
+    except Exception as exc:
+        logging.error("%s", exc)
+        try:
+            core.write_diagnostics(
+                snapshot,
+                status="error",
+                stage="configuration",
+                error_type=type(exc).__name__,
+            )
+        except Exception:
+            logging.warning("Could not persist UniFi configuration diagnostics.")
+        return 2
+
+    try:
+        publisher = core.Publisher(global_cfg)
+    except Exception as exc:
+        logging.error("MQTT initialization failed: %s", exc)
+        try:
+            core.write_diagnostics(
+                snapshot,
+                status="error",
+                stage="mqtt_connect",
+                error_type=type(exc).__name__,
+            )
+        except Exception:
+            logging.warning("Could not persist UniFi MQTT diagnostics.")
+        return 2
+
+    interval = int(global_cfg.get("poll_interval", 30))
+    try:
+        while not core.STOP:
+            started = time.monotonic()
+            try:
+                poll_single_with_failover(
+                    global_cfg,
+                    profiles,
+                    snapshot,
+                    publisher,
+                    priority=priority,
+                    fallback=fallback,
+                )
+            except Exception as exc:
+                logging.error("UniFi poll failed across configured transports: %s", exc)
+            deadline = time.monotonic() + max(
+                1.0,
+                interval - (time.monotonic() - started),
+            )
+            while not core.STOP and time.monotonic() < deadline:
+                time.sleep(min(0.5, deadline - time.monotonic()))
+    finally:
+        publisher.close()
+
+    logging.info("Stopped.")
+    return 0
 
 
 def main() -> int:
@@ -362,8 +506,7 @@ def main() -> int:
         return 0
 
     if not multi_controller_enabled(raw):
-        _exec_legacy(args.config, args.snapshot)
-        return 0
+        return _run_single_priority_fallback(args.config, args.snapshot)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     signal.signal(signal.SIGTERM, core.handle_stop)

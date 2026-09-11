@@ -191,6 +191,141 @@ def _mqtt_global_config(data: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _profile_api_key(value: Any, label: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    if core._has_control_chars(key) or len(key) > 4096:
+        raise RuntimeError(f"{label} is invalid or too long")
+    return key
+
+
+def _profile_site_id(value: Any, label: str) -> str:
+    site_id = str(value or "auto").strip() or "auto"
+    if core._has_control_chars(site_id) or len(site_id) > 256:
+        raise RuntimeError(f"{label} is invalid or too long")
+    return site_id
+
+
+def parse_single_connection_profiles(
+    data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str, str]:
+    """Build the ordered single-controller priority/fallback plan.
+
+    The legacy one-transport fields remain valid migration inputs. New local and
+    remote credentials are independent so both can be stored simultaneously.
+    """
+    legacy_transport = core.validate_transport(data.get("transport", "local"))
+    legacy_key = _profile_api_key(data.get("api_key"), "api_key")
+
+    priority = core.validate_transport(
+        data.get("priority_transport", legacy_transport)
+    )
+    fallback = str(data.get("fallback_transport", "none") or "none").strip().lower()
+    if fallback not in {"none", "local", "remote"}:
+        raise RuntimeError("fallback_transport must be none, local or remote")
+    if fallback == priority:
+        raise RuntimeError("fallback_transport must differ from priority_transport")
+
+    local_key = _profile_api_key(data.get("local_api_key"), "local_api_key")
+    remote_key = _profile_api_key(data.get("remote_api_key"), "remote_api_key")
+    if not local_key and legacy_transport == "local":
+        local_key = legacy_key
+    if not remote_key and legacy_transport == "remote":
+        remote_key = legacy_key
+
+    profiles: dict[str, dict[str, Any]] = {}
+    if local_key:
+        local_url = str(data.get("local_controller_url") or "").strip()
+        if not local_url and legacy_transport == "local":
+            local_url = str(data.get("controller_url") or "").strip()
+        if not local_url:
+            local_url = "https://192.168.1.1:11443"
+        local_allow_http = core.truthy(
+            data.get(
+                "local_allow_insecure_http",
+                data.get("allow_insecure_http", False)
+                if legacy_transport == "local"
+                else False,
+            )
+        )
+        local_site = data.get("local_site_id")
+        if (local_site is None or not str(local_site).strip()) and legacy_transport == "local":
+            local_site = data.get("site_id", "auto")
+        profiles["local"] = {
+            "transport": "local",
+            "controller_url": core.validate_controller_url(local_url, local_allow_http),
+            "host_id": "auto",
+            "site_id": _profile_site_id(local_site, "local_site_id"),
+            "api_key": local_key,
+            "verify_ssl": core.truthy(
+                data.get(
+                    "local_verify_ssl",
+                    data.get("verify_ssl", True)
+                    if legacy_transport == "local"
+                    else True,
+                )
+            ),
+            "allow_insecure_http": local_allow_http,
+        }
+
+    if remote_key:
+        remote_host = data.get("remote_host_id")
+        if (remote_host is None or not str(remote_host).strip()) and legacy_transport == "remote":
+            remote_host = data.get("host_id", "auto")
+        remote_site = data.get("remote_site_id")
+        if (remote_site is None or not str(remote_site).strip()) and legacy_transport == "remote":
+            remote_site = data.get("site_id", "auto")
+        profiles["remote"] = {
+            "transport": "remote",
+            "controller_url": core.REMOTE_API_BASE,
+            "host_id": core.validate_host_id(remote_host or "auto"),
+            "site_id": _profile_site_id(remote_site, "remote_site_id"),
+            "api_key": remote_key,
+            "verify_ssl": True,
+            "allow_insecure_http": False,
+        }
+
+    if not profiles:
+        raise RuntimeError(
+            "Configure at least one UniFi API key: local Integration API or remote Site Manager API."
+        )
+
+    # A lone configured profile is the effective runtime priority even if the
+    # saved preference points at the not-yet-configured peer. This avoids
+    # reporting normal single-profile operation as failover while leaving the
+    # saved preference untouched for a future second credential.
+    if priority not in profiles and len(profiles) == 1:
+        priority = next(iter(profiles))
+        if fallback == priority:
+            fallback = "none"
+
+    ordered: list[dict[str, Any]] = []
+    if priority in profiles:
+        ordered.append(profiles[priority])
+    if fallback != "none" and fallback in profiles and fallback != priority:
+        ordered.append(profiles[fallback])
+
+    # If only one profile is configured, use it regardless of which preference
+    # was selected. This keeps the operator model simple: configured wins over
+    # an otherwise unusable empty priority slot.
+    if not ordered:
+        for transport in ("local", "remote"):
+            if transport in profiles:
+                ordered.append(profiles[transport])
+                break
+
+    return ordered, priority, fallback
+
+
+def load_single_connection_plan(
+    path: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], str, str]:
+    raw = load_raw_options(path)
+    profiles, priority, fallback = parse_single_connection_profiles(raw)
+    return _mqtt_global_config(raw), profiles, priority, fallback
+
+
 def load_multi_config(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     raw = load_raw_options(path)
     entries = parse_controller_entries(raw)

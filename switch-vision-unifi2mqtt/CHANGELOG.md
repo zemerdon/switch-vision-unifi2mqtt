@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v3.1.1
+
+- Add independent saved **Local Integration API** and **Remote / UniFi Site Manager** connection profiles so both API keys can coexist without overwriting each other.
+- Add `priority_transport` plus optional `fallback_transport`: UniFi2MQTT tries the priority path first on every poll, uses the configured fallback only when the priority path fails, and automatically returns to the priority path as soon as it recovers.
+- Preserve existing 3.1.0 single-transport configuration as migration input when the new Local/Remote profile fields are absent; one configured profile remains usable even if the selected preference points at an unconfigured path.
+- Apply the same priority/fallback plan to the read-only capability probe and expose only privacy-safe active-path/failover state in diagnostics.
+- Keep first-class multi-controller operation unchanged: when `controllers` entries are configured, each controller retains its own Local or Remote transport and isolated private state.
+- Keep Remote transport pinned to verified HTTPS through the official Site Manager connector; no username/password authentication or cloud TLS bypass is introduced.
+
 ## v3.1.0
 
 - Add a `local` / `remote` UniFi API transport selector while preserving `local` as the compatibility default.
