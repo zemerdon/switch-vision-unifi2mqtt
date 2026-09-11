@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import unifi2mqtt as core
 
-VERSION = "3.1.1"
+VERSION = "3.1.2"
 COUNTER_FIELDS = (
     "rx_bytes",
     "tx_bytes",

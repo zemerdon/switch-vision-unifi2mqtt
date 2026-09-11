@@ -127,6 +127,7 @@ jobs:
           python switch-vision-unifi2mqtt/classic-port-probe-test.py
           python switch-vision-unifi2mqtt/multi-controller-test.py
           python switch-vision-unifi2mqtt/multi-controller-probe-test.py
+          python switch-vision-unifi2mqtt/optional-profile-test.py
 
   build:
     name: Validate release container / ${{ matrix.arch }}
