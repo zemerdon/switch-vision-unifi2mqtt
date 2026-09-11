@@ -294,9 +294,12 @@ def main() -> int:
     assert 'transport: "local"' in config_text
     assert 'host_id: "auto"' in config_text
     assert 'site_id: "auto"' in config_text
-    assert 'api_key: null' in config_text
+    options_block = config_text.split("options:\n", 1)[1].split("\nschema:\n", 1)[0]
+    schema_block = config_text.split("\nschema:\n", 1)[1]
+    for key in ("api_key", "local_api_key", "remote_api_key"):
+        assert f"  {key}:" not in options_block
+        assert f"  {key}: password?" in schema_block
     assert 'transport: list(local|remote)' in config_text
-    assert 'api_key: password?' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
     print(f"Switch Vision UniFi2MQTT v{m.VERSION} hardening regression: PASS")

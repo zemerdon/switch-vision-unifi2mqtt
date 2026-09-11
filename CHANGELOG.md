@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v3.1.2
+
+- Make Local and Remote API credentials genuinely independent in the Home Assistant app schema. Local-only configurations no longer require a `remote_api_key`, and Remote-only configurations no longer require a `local_api_key`.
+- Remove optional API-key entries from the app defaults while retaining their `password?` schema fields, so Home Assistant Supervisor does not treat the unused peer credential as a required option.
+- Add a permanent schema regression for Local-only and Remote-only configurations.
+
 ## v3.1.1
 
 - Add independent saved **Local Integration API** and **Remote / UniFi Site Manager** connection profiles so both API keys can coexist without overwriting each other.
