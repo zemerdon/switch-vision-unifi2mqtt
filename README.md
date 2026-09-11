@@ -63,7 +63,7 @@ Site selection continues to work as before:
 - `default` is accepted as an automatic/default-site selector.
 - Multi-site controllers may specify the Network site UUID, exact site name, or internal reference.
 
-### Unreleased Site Manager connector transport
+### Site Manager connector transport
 
 The current development source also supports `transport: remote` for consoles that are not directly reachable from Home Assistant. This mode uses a UniFi Site Manager API key with `https://api.ui.com` and the official console connector. It does not use a UniFi username/password session.
 
@@ -85,6 +85,12 @@ api_key: YOUR_SITE_MANAGER_API_KEY
 ```
 
 Site Manager connector transport is included in **UniFi2MQTT 3.1.0**.
+
+### Local / Remote priority and fallback (3.1.1)
+
+UniFi2MQTT 3.1.1 can keep Local Integration API and Remote Site Manager credentials configured at the same time. `priority_transport` selects the path attempted first on every poll; `fallback_transport` may select the other path or `none`. If the priority path is unavailable, the bridge uses the configured fallback for that poll and retries the priority path again on the next poll, so recovery is automatic.
+
+The legacy `transport`, `controller_url`, `host_id`, `site_id`, and `api_key` fields remain accepted as migration inputs for existing 3.1.0 installs. Multi-controller `controllers` entries remain independent of the single-controller priority/fallback plan.
 
 ### Multi-controller / multi-site mode
 

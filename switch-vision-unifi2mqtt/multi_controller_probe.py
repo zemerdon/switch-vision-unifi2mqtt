@@ -10,6 +10,7 @@ import classic_port_probe as probe
 import unifi2mqtt as core
 from controller_config import (
     load_raw_options,
+    load_single_connection_plan,
     multi_controller_enabled,
     parse_controller_entries,
 )
@@ -48,10 +49,42 @@ def _probe_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _run_single_priority_probe(config_path: Path) -> dict[str, Any]:
+    _global_cfg, profiles, priority, fallback = load_single_connection_plan(config_path)
+    attempted: list[str] = []
+    last: dict[str, Any] | None = None
+    for profile in profiles:
+        transport = str(profile.get("transport") or "local")
+        attempted.append(transport)
+        result = _probe_entry(profile)
+        result["mode"] = "priority_fallback"
+        result["priority_transport"] = priority
+        result["fallback_transport"] = fallback
+        result["active_transport"] = transport if result.get("status") == "ok" else "none"
+        result["failover_active"] = bool(
+            result.get("status") == "ok" and transport != priority
+        )
+        result["transports_attempted"] = list(attempted)
+        last = result
+        if result.get("status") == "ok":
+            return result
+    return last or {
+        **probe.base_result(),
+        "mode": "priority_fallback",
+        "priority_transport": priority,
+        "fallback_transport": fallback,
+        "active_transport": "none",
+        "failover_active": False,
+        "transports_attempted": attempted,
+        "status": "unavailable",
+        "error_type": "no_connection_profile",
+    }
+
+
 def run_multi_probe(config_path: Path) -> dict[str, Any]:
     raw = load_raw_options(config_path)
     if not multi_controller_enabled(raw):
-        return probe.run_probe(config_path)
+        return _run_single_priority_probe(config_path)
 
     entries = parse_controller_entries(raw)
     results = [_probe_entry(entry) for entry in entries]
