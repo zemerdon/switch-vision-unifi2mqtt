@@ -246,6 +246,18 @@ def main() -> int:
     else:
         raise AssertionError("empty site list was not rejected")
 
+    class UntrustedCodeError(RuntimeError):
+        code = "operator_private_label"
+
+    assert m.privacy_safe_error_type(UntrustedCodeError("fixture")) == "UntrustedCodeError"
+    assert (
+        m.privacy_safe_error_type(
+            UntrustedCodeError("fixture"),
+            "network_api_unavailable",
+        )
+        == "network_api_unavailable"
+    )
+
     class GuardPublisher:
         def require_connected(self):
             pass

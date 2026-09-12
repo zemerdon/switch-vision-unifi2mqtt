@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import ssl
 import stat
 import time
@@ -28,19 +29,52 @@ REMOTE_API_BASE = "https://api.ui.com"
 VALID_TRANSPORTS = {"local", "remote"}
 
 
+SAFE_DIAGNOSTIC_ERROR_TYPES = {
+    "authentication_or_authorization_failed",
+    "connection_refused",
+    "dns_resolution_failed",
+    "host_resolution_failed",
+    "invalid_response_json",
+    "network_api_unavailable",
+    "network_connection_failed",
+    "network_timeout",
+    "response_too_large",
+    "site_resolution_failed",
+    "tls_handshake_failed",
+    "tls_verification_failed",
+}
+
+
+def _safe_diagnostic_code(value: object) -> str | None:
+    code = str(value or "").strip()
+    if code in SAFE_DIAGNOSTIC_ERROR_TYPES:
+        return code
+    if re.fullmatch(r"http_[1-5][0-9]{2}", code):
+        return code
+    return None
+
+
 class UniFiDiagnosticError(RuntimeError):
     """Runtime failure with a bounded privacy-safe diagnostic category."""
 
     def __init__(self, code: str, message: str) -> None:
+        safe_code = _safe_diagnostic_code(code)
+        if safe_code is None:
+            raise ValueError("Unsupported UniFi diagnostic error category")
         super().__init__(message)
-        self.code = code
+        self.code = safe_code
 
 
 def privacy_safe_error_type(exc: BaseException, fallback: str | None = None) -> str:
-    code = getattr(exc, "code", None)
-    if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.:+-]{1,128}", code):
-        return code
-    return fallback or type(exc).__name__
+    if isinstance(exc, UniFiDiagnosticError):
+        safe_code = _safe_diagnostic_code(exc.code)
+        if safe_code:
+            return safe_code
+    safe_fallback = _safe_diagnostic_code(fallback)
+    if safe_fallback:
+        return safe_fallback
+    name = type(exc).__name__
+    return name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) else "Exception"
 
 
 def handle_stop(_signum: int, _frame: Any) -> None:
@@ -369,6 +403,8 @@ class UniFiClient:
                 code = "tls_verification_failed"
             elif isinstance(reason, ssl.SSLError):
                 code = "tls_handshake_failed"
+            elif isinstance(reason, socket.gaierror):
+                code = "dns_resolution_failed"
             elif isinstance(reason, TimeoutError):
                 code = "network_timeout"
             elif isinstance(reason, ConnectionRefusedError):
