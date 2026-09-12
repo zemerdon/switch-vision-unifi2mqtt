@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import unifi2mqtt as core
 
-VERSION = "3.1.2"
+VERSION = "3.1.3"
 COUNTER_FIELDS = (
     "rx_bytes",
     "tx_bytes",
@@ -215,9 +215,11 @@ def run_probe(config_path: Path) -> dict[str, Any]:
     except ProbeError as exc:
         result["status"] = "unavailable"
         result["error_type"] = exc.code
-    except RuntimeError:
+    except RuntimeError as exc:
         result["status"] = "unavailable"
-        result["error_type"] = "network_api_unavailable"
+        result["error_type"] = core.privacy_safe_error_type(
+            exc, "network_api_unavailable"
+        )
     except Exception:
         result["status"] = "unavailable"
         result["error_type"] = "unexpected_probe_error"
