@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import signal
+import socket
 import ssl
 import stat
 import time
@@ -20,12 +21,60 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "3.1.2"
+VERSION = "3.1.3"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
 REMOTE_API_BASE = "https://api.ui.com"
 VALID_TRANSPORTS = {"local", "remote"}
+
+
+SAFE_DIAGNOSTIC_ERROR_TYPES = {
+    "authentication_or_authorization_failed",
+    "connection_refused",
+    "dns_resolution_failed",
+    "host_resolution_failed",
+    "invalid_response_json",
+    "network_api_unavailable",
+    "network_connection_failed",
+    "network_timeout",
+    "response_too_large",
+    "site_resolution_failed",
+    "tls_handshake_failed",
+    "tls_verification_failed",
+}
+
+
+def _safe_diagnostic_code(value: object) -> str | None:
+    code = str(value or "").strip()
+    if code in SAFE_DIAGNOSTIC_ERROR_TYPES:
+        return code
+    if re.fullmatch(r"http_[1-5][0-9]{2}", code):
+        return code
+    return None
+
+
+class UniFiDiagnosticError(RuntimeError):
+    """Runtime failure with a bounded privacy-safe diagnostic category."""
+
+    def __init__(self, code: str, message: str) -> None:
+        safe_code = _safe_diagnostic_code(code)
+        if safe_code is None:
+            raise ValueError("Unsupported UniFi diagnostic error category")
+        super().__init__(message)
+        self.code = safe_code
+
+
+def privacy_safe_error_type(exc: BaseException, fallback: str | None = None) -> str:
+    if isinstance(exc, UniFiDiagnosticError):
+        safe_code = _safe_diagnostic_code(exc.code)
+        if safe_code:
+            return safe_code
+    safe_fallback = _safe_diagnostic_code(fallback)
+    if safe_fallback:
+        return safe_fallback
+    name = type(exc).__name__
+    return name if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", name) else "Exception"
 
 
 def handle_stop(_signum: int, _frame: Any) -> None:
@@ -100,7 +149,7 @@ def response_rows(payload: Any, keys: tuple[str, ...], label: str) -> list[dict[
 def select_network_site(sites: list[dict[str, Any]], requested: Any) -> dict[str, Any]:
     usable = [site for site in sites if str(site.get("id") or "").strip()]
     if not usable:
-        raise RuntimeError("UniFi Network API returned no sites")
+        raise UniFiDiagnosticError("site_resolution_failed", "UniFi Network API returned no sites")
 
     requested_text = str(requested or "auto").strip() or "auto"
     requested_key = requested_text.casefold()
@@ -124,9 +173,10 @@ def select_network_site(sites: list[dict[str, Any]], requested: Any) -> dict[str
             return defaults[0]
         if len(usable) == 1:
             return usable[0]
-        raise RuntimeError(
+        raise UniFiDiagnosticError(
+            "site_resolution_failed",
             "Multiple UniFi Network sites were returned; configure site_id with "
-            "the required Network Integration site UUID, internal reference, or exact site name"
+            "the required Network Integration site UUID, internal reference, or exact site name",
         )
 
     matches = [
@@ -138,8 +188,8 @@ def select_network_site(sites: list[dict[str, Any]], requested: Any) -> dict[str
     if len(matches) == 1:
         return matches[0]
     if not matches:
-        raise RuntimeError("Configured site_id did not match any UniFi Network Integration site")
-    raise RuntimeError("Configured site_id matched multiple UniFi Network Integration sites")
+        raise UniFiDiagnosticError("site_resolution_failed", "Configured site_id did not match any UniFi Network Integration site")
+    raise UniFiDiagnosticError("site_resolution_failed", "Configured site_id matched multiple UniFi Network Integration sites")
 
 
 def validate_topic_prefix(name: str, value: Any) -> str:
@@ -321,11 +371,17 @@ class UniFiClient:
             with urlopen(req, context=self.context, timeout=15) as response:
                 raw = response.read(MAX_API_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_API_RESPONSE_BYTES:
-                    raise RuntimeError("UniFi API response exceeded the 4 MiB safety limit")
+                    raise UniFiDiagnosticError(
+                        "response_too_large",
+                        "UniFi API response exceeded the 4 MiB safety limit",
+                    )
                 try:
                     return json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise RuntimeError("UniFi API returned invalid JSON") from exc
+                    raise UniFiDiagnosticError(
+                        "invalid_response_json",
+                        "UniFi API returned invalid JSON",
+                    ) from exc
         except HTTPError as exc:
             if exc.code in {401, 403}:
                 credential = (
@@ -333,12 +389,47 @@ class UniFiClient:
                     if self.transport == "remote"
                     else "local UniFi Network Integration API key"
                 )
-                raise RuntimeError(
-                    f"UniFi API HTTP {exc.code}: authentication/authorization failed; verify the {credential}"
+                raise UniFiDiagnosticError(
+                    "authentication_or_authorization_failed",
+                    f"UniFi API HTTP {exc.code}: authentication/authorization failed; verify the {credential}",
                 ) from exc
-            raise RuntimeError(f"UniFi API HTTP {exc.code}: request failed") from exc
+            raise UniFiDiagnosticError(
+                f"http_{exc.code}",
+                f"UniFi API HTTP {exc.code}: request failed",
+            ) from exc
         except URLError as exc:
-            raise RuntimeError(f"UniFi API connection failed: {exc.reason}") from exc
+            reason = exc.reason
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                code = "tls_verification_failed"
+            elif isinstance(reason, ssl.SSLError):
+                code = "tls_handshake_failed"
+            elif isinstance(reason, socket.gaierror):
+                code = "dns_resolution_failed"
+            elif isinstance(reason, TimeoutError):
+                code = "network_timeout"
+            elif isinstance(reason, ConnectionRefusedError):
+                code = "connection_refused"
+            else:
+                code = "network_connection_failed"
+            raise UniFiDiagnosticError(
+                code,
+                f"UniFi API connection failed: {reason}",
+            ) from exc
+        except ssl.SSLCertVerificationError as exc:
+            raise UniFiDiagnosticError(
+                "tls_verification_failed",
+                "UniFi API TLS certificate verification failed",
+            ) from exc
+        except ssl.SSLError as exc:
+            raise UniFiDiagnosticError(
+                "tls_handshake_failed",
+                "UniFi API TLS handshake failed",
+            ) from exc
+        except TimeoutError as exc:
+            raise UniFiDiagnosticError(
+                "network_timeout",
+                "UniFi API connection timed out",
+            ) from exc
 
     @staticmethod
     def _network_console(host: dict[str, Any]) -> bool:
@@ -435,23 +526,24 @@ class UniFiClient:
             )
             selected = self._host_from_payload(payload)
             if str(selected.get("id") or "").strip() != requested:
-                raise RuntimeError("Configured host_id did not match the returned Site Manager host")
+                raise UniFiDiagnosticError("host_resolution_failed", "Configured host_id did not match the returned Site Manager host")
             if not self._network_console(selected):
-                raise RuntimeError("Configured host_id is not a usable UniFi Network host")
+                raise UniFiDiagnosticError("host_resolution_failed", "Configured host_id is not a usable UniFi Network host")
         else:
             hosts = self.list_hosts()
             if len(hosts) == 1:
                 selected = hosts[0]
             elif not hosts:
-                raise RuntimeError("Site Manager returned no usable UniFi Network hosts")
+                raise UniFiDiagnosticError("host_resolution_failed", "Site Manager returned no usable UniFi Network hosts")
             else:
-                raise RuntimeError(
-                    "Multiple usable UniFi Network hosts were returned; configure host_id with the required Site Manager host ID"
+                raise UniFiDiagnosticError(
+                    "host_resolution_failed",
+                    "Multiple usable UniFi Network hosts were returned; configure host_id with the required Site Manager host ID",
                 )
 
         resolved = str(selected.get("id") or "").strip()
         if not resolved:
-            raise RuntimeError("Resolved Site Manager host did not contain a usable host ID")
+            raise UniFiDiagnosticError("host_resolution_failed", "Resolved Site Manager host did not contain a usable host ID")
         self.host_id = resolved
         logging.info("Resolved UniFi Site Manager Network host.")
         return resolved
@@ -1416,7 +1508,7 @@ def _poll_once_unlocked(
             snapshot,
             status="error",
             stage="mqtt_connect",
-            error_type=type(exc).__name__,
+            error_type=privacy_safe_error_type(exc),
         )
         raise
 
@@ -1450,7 +1542,7 @@ def _poll_once_unlocked(
                 snapshot,
                 status="error",
                 stage="list_devices",
-                error_type=type(exc).__name__,
+                error_type=privacy_safe_error_type(exc),
             )
             raise
 
@@ -1597,7 +1689,7 @@ def main() -> int:
                 args.snapshot,
                 status="error",
                 stage="configuration",
-                error_type=type(exc).__name__,
+                error_type=privacy_safe_error_type(exc),
             )
         except Exception:
             logging.warning(
@@ -1616,7 +1708,7 @@ def main() -> int:
                 args.snapshot,
                 status="error",
                 stage="mqtt_connect",
-                error_type=type(exc).__name__,
+                error_type=privacy_safe_error_type(exc),
             )
         except Exception:
             logging.warning(

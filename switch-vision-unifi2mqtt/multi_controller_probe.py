@@ -40,9 +40,11 @@ def _probe_entry(entry: dict[str, Any]) -> dict[str, Any]:
     except probe.ProbeError as exc:
         result["status"] = "unavailable"
         result["error_type"] = exc.code
-    except RuntimeError:
+    except RuntimeError as exc:
         result["status"] = "unavailable"
-        result["error_type"] = "network_api_unavailable"
+        result["error_type"] = core.privacy_safe_error_type(
+            exc, "network_api_unavailable"
+        )
     except Exception:
         result["status"] = "unavailable"
         result["error_type"] = "unexpected_probe_error"

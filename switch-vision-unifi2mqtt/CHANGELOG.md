@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.1.3
+
+- Add bounded privacy-safe UniFi connection failure categories so Support My Switch can distinguish TLS verification, TLS handshake, authentication/authorization, HTTP, site/host resolution, timeout/refusal and generic network failures without storing controller URLs, credentials or raw response bodies.
+- Preserve privacy-safe per-transport priority/fallback results in public diagnostics, including the failed priority path when a fallback succeeds.
+- Apply the same safe failure classifier to the classic per-port capability probe and multi-controller runtime diagnostics.
+
 ## Unreleased
 
 ## v3.1.2

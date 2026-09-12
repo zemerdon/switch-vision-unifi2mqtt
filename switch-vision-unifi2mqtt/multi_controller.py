@@ -322,7 +322,7 @@ def poll_multi_once(
                 {
                     "status": "error",
                     "stage": "poll",
-                    "error_type": type(exc).__name__,
+                    "error_type": core.privacy_safe_error_type(exc),
                 }
             )
 
@@ -341,6 +341,7 @@ def _annotate_single_connection_diagnostics(
     fallback: str,
     active: str,
     attempted: list[str],
+    connection_results: list[dict[str, Any]],
 ) -> None:
     """Add privacy-safe transport state to the public diagnostics payload."""
     path = core.diagnostics_path_for_snapshot(snapshot)
@@ -354,6 +355,15 @@ def _annotate_single_connection_diagnostics(
             "failover_active": active != priority,
             "transports_attempted": [
                 item for item in attempted if item in {"local", "remote"}
+            ],
+            "connection_results": [
+                {
+                    key: row[key]
+                    for key in ("transport", "status", "error_type")
+                    if key in row
+                }
+                for row in connection_results
+                if row.get("transport") in {"local", "remote"}
             ],
         }
     )
@@ -374,6 +384,7 @@ def poll_single_with_failover(
     """Try priority first on every poll, then the configured fallback."""
     attempted: list[str] = []
     failures: list[Exception] = []
+    connection_results: list[dict[str, Any]] = []
     for profile in profiles:
         transport = str(profile.get("transport") or "local")
         attempted.append(transport)
@@ -381,12 +392,17 @@ def poll_single_with_failover(
         cfg.update(profile)
         try:
             poller(cfg, snapshot, publisher)
+            connection_results.append({
+                "transport": transport,
+                "status": "success",
+            })
             _annotate_single_connection_diagnostics(
                 snapshot,
                 priority=priority,
                 fallback=fallback,
                 active=transport,
                 attempted=attempted,
+                connection_results=connection_results,
             )
             if transport != priority:
                 logging.warning(
@@ -399,6 +415,11 @@ def poll_single_with_failover(
             return transport
         except Exception as exc:
             failures.append(exc)
+            connection_results.append({
+                "transport": transport,
+                "status": "error",
+                "error_type": core.privacy_safe_error_type(exc),
+            })
             logging.warning("UniFi %s transport poll failed: %s", transport, exc)
 
     active = "none"
@@ -421,7 +442,12 @@ def poll_single_with_failover(
             "active_transport": active,
             "failover_active": False,
             "transports_attempted": attempted,
-            "error_type": type(failures[-1]).__name__ if failures else "RuntimeError",
+            "connection_results": connection_results,
+            "error_type": (
+                core.privacy_safe_error_type(failures[-1])
+                if failures
+                else "no_connection_profile"
+            ),
         }
     )
     _secure_write_json(path, payload)
@@ -523,7 +549,7 @@ def main() -> int:
                     {
                         "status": "error",
                         "stage": "configuration",
-                        "error_type": type(exc).__name__,
+                        "error_type": core.privacy_safe_error_type(exc),
                     }
                 ],
                 devices=[],
@@ -545,7 +571,7 @@ def main() -> int:
                     {
                         "status": "error",
                         "stage": "mqtt_connect",
-                        "error_type": type(exc).__name__,
+                        "error_type": core.privacy_safe_error_type(exc),
                     }
                 ],
                 devices=[],

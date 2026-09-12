@@ -5,12 +5,13 @@ import importlib.util
 import io
 import json
 import os
+import ssl
 import stat
 import sys
 import tempfile
 import types
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 
 def load_module():
@@ -169,6 +170,7 @@ def main() -> int:
         except RuntimeError as exc:
             assert "HTTP 500" in str(exc)
             assert secret not in str(exc)
+            assert m.privacy_safe_error_type(exc) == "http_500"
         else:
             raise AssertionError("HTTP error was not raised")
     finally:
@@ -200,12 +202,61 @@ def main() -> int:
                 in message
             )
             assert auth_secret not in message
+            assert m.privacy_safe_error_type(exc) == "authentication_or_authorization_failed"
         else:
             raise AssertionError(
                 "HTTP 401 was not raised"
             )
     finally:
         m.urlopen = old_urlopen
+
+    def fail_tls(*args, **kwargs):
+        raise URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+
+    m.urlopen = fail_tls
+    try:
+        try:
+            client._get("/test")
+        except RuntimeError as exc:
+            assert m.privacy_safe_error_type(exc) == "tls_verification_failed"
+            assert "fixture-key" not in str(exc)
+        else:
+            raise AssertionError("TLS verification failure was not raised")
+    finally:
+        m.urlopen = old_urlopen
+
+    def fail_refused(*args, **kwargs):
+        raise URLError(ConnectionRefusedError("connection refused"))
+
+    m.urlopen = fail_refused
+    try:
+        try:
+            client._get("/test")
+        except RuntimeError as exc:
+            assert m.privacy_safe_error_type(exc) == "connection_refused"
+        else:
+            raise AssertionError("connection refusal was not raised")
+    finally:
+        m.urlopen = old_urlopen
+
+    try:
+        m.select_network_site([], "auto")
+    except RuntimeError as exc:
+        assert m.privacy_safe_error_type(exc) == "site_resolution_failed"
+    else:
+        raise AssertionError("empty site list was not rejected")
+
+    class UntrustedCodeError(RuntimeError):
+        code = "operator_private_label"
+
+    assert m.privacy_safe_error_type(UntrustedCodeError("fixture")) == "UntrustedCodeError"
+    assert (
+        m.privacy_safe_error_type(
+            UntrustedCodeError("fixture"),
+            "network_api_unavailable",
+        )
+        == "network_api_unavailable"
+    )
 
     class GuardPublisher:
         def require_connected(self):

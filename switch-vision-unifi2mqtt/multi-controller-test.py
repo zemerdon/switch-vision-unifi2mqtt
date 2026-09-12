@@ -459,7 +459,10 @@ def test_single_priority_fails_over_and_returns_to_priority() -> None:
             transport = str(cfg["transport"])
             attempts.append(transport)
             if transport == "local" and not local_available:
-                raise RuntimeError("local unavailable")
+                raise core.UniFiDiagnosticError(
+                    "tls_verification_failed",
+                    "local unavailable",
+                )
             core.write_snapshot(_snapshot, [sample_device("Switch")], 0)
             core.write_diagnostics(
                 _snapshot,
@@ -484,6 +487,14 @@ def test_single_priority_fails_over_and_returns_to_priority() -> None:
         )
         assert diagnostics["active_transport"] == "remote"
         assert diagnostics["failover_active"] is True
+        assert diagnostics["connection_results"] == [
+            {
+                "transport": "local",
+                "status": "error",
+                "error_type": "tls_verification_failed",
+            },
+            {"transport": "remote", "status": "success"},
+        ]
         assert "local-secret" not in json.dumps(diagnostics)
         assert "remote-secret" not in json.dumps(diagnostics)
 
@@ -505,6 +516,57 @@ def test_single_priority_fails_over_and_returns_to_priority() -> None:
         )
         assert diagnostics["active_transport"] == "local"
         assert diagnostics["failover_active"] is False
+        assert diagnostics["connection_results"] == [
+            {"transport": "local", "status": "success"},
+        ]
+
+        def fail_both(cfg: dict, _snapshot: Path, _publisher: FakePublisher) -> None:
+            transport = str(cfg["transport"])
+            if transport == "local":
+                raise core.UniFiDiagnosticError(
+                    "tls_verification_failed",
+                    "local unavailable",
+                )
+            raise core.UniFiDiagnosticError(
+                "authentication_or_authorization_failed",
+                "remote key rejected",
+            )
+
+        try:
+            poll_single_with_failover(
+                global_cfg(),
+                profiles,
+                snapshot,
+                publisher,
+                priority=priority,
+                fallback=fallback,
+                poller=fail_both,
+            )
+        except RuntimeError as exc:
+            assert "All configured UniFi connection paths failed" in str(exc)
+        else:
+            raise AssertionError("all-path failure did not fail the poll")
+
+        diagnostics = json.loads(
+            (snapshot.parent / "diagnostics.json").read_text(encoding="utf-8")
+        )
+        assert diagnostics["active_transport"] == "none"
+        assert diagnostics["error_type"] == "authentication_or_authorization_failed"
+        assert diagnostics["connection_results"] == [
+            {
+                "transport": "local",
+                "status": "error",
+                "error_type": "tls_verification_failed",
+            },
+            {
+                "transport": "remote",
+                "status": "error",
+                "error_type": "authentication_or_authorization_failed",
+            },
+        ]
+        serialized = json.dumps(diagnostics)
+        assert "local-secret" not in serialized
+        assert "remote-secret" not in serialized
 
 
 def main() -> int:
