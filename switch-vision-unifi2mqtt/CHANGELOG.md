@@ -1,5 +1,13 @@
 # Changelog
 
+## v3.1.4
+
+- Preserve the last complete normalized device snapshot when a transient whole-poll failure or per-device detail refresh fails, mark affected telemetry stale/offline, and avoid silently replacing known port topology with partial data.
+- Require repeated empty-device confirmations before retiring the entire previously known switching set, preventing a single controller/API gap from deleting working MQTT/Home Assistant entities.
+- Publish bounded freshness metadata for retained device snapshots so Core can reject old API values instead of presenting them as current.
+- Preserve controller-reported device MAC identity in normalized snapshots for deterministic Discovery SNMP/UniFi reconciliation.
+- Keep privacy-safe connection diagnostics and existing Local/Remote priority/fallback behavior unchanged.
+
 ## v3.1.3
 
 - Add bounded privacy-safe UniFi connection failure categories so Support My Switch can distinguish TLS verification, TLS handshake, authentication/authorization, HTTP, site/host resolution, timeout/refusal and generic network failures without storing controller URLs, credentials or raw response bodies.

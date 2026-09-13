@@ -318,6 +318,14 @@ def poll_multi_once(
                 _mark_previous_offline(publisher, namespace, controller_snapshot)
             except Exception as offline_exc:
                 logging.warning("Could not mark failed controller snapshot offline: %s", offline_exc)
+            try:
+                core.mark_snapshot_stale(
+                    controller_snapshot,
+                    "controller_poll_failed",
+                    core.snapshot_stale_after_seconds(cfg),
+                )
+            except Exception as stale_exc:
+                logging.warning("Could not mark failed controller snapshot stale: %s", stale_exc)
             results.append(
                 {
                     "status": "error",
@@ -328,7 +336,12 @@ def poll_multi_once(
 
     devices = _aggregate_current_snapshots(state_root, controllers)
     with core.snapshot_operation_lock(snapshot):
-        core.write_snapshot(snapshot, devices, 0)
+        core.write_snapshot(
+            snapshot,
+            devices,
+            0,
+            core.snapshot_stale_after_seconds(global_cfg),
+        )
     _write_multi_diagnostics(public_root, controller_results=results, devices=devices)
     _write_registry(state_root, namespaces)
     return devices
@@ -451,6 +464,10 @@ def poll_single_with_failover(
         }
     )
     _secure_write_json(path, payload)
+    try:
+        core.mark_snapshot_stale(snapshot, "all_transports_failed")
+    except Exception as stale_exc:
+        logging.warning("Could not mark retained UniFi snapshot stale after transport failure: %s", stale_exc)
     if failures:
         raise RuntimeError("All configured UniFi connection paths failed") from failures[-1]
     raise RuntimeError("No configured UniFi connection path is available")
