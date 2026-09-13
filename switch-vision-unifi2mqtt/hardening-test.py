@@ -310,7 +310,13 @@ def main() -> int:
             for expected_streak in (1, 2):
                 m.poll_once(config_payload(), snapshot)
                 doc = json.loads(snapshot.read_text(encoding="utf-8"))
-                assert doc["devices"] == [previous_device]
+                assert len(doc["devices"]) == 1
+                preserved = doc["devices"][0]
+                assert preserved["id"] == previous_device["id"]
+                assert preserved["model"] == previous_device["model"]
+                assert preserved["freshness"]["stale"] is True
+                assert preserved["freshness"]["reason"] == "empty_switch_set_unconfirmed"
+                assert doc["stale_after_seconds"] == 90
                 assert doc["empty_switch_polls"] == expected_streak
                 assert GuardPublisher.last is not None
                 assert GuardPublisher.last.retired == []

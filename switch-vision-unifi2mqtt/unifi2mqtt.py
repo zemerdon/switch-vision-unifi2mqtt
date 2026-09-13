@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
 
-VERSION = "3.1.3"
+VERSION = "3.1.4"
 STOP = False
 EMPTY_SWITCH_CONFIRM_POLLS = 3
 MAX_API_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -789,17 +789,60 @@ def extract_ports(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(out, key=lambda x: x["idx"])
 
 
+def normalized_mac_address(source: dict[str, Any]) -> str:
+    """Return one normalized hardware MAC when the API exposes it."""
+    for key in ("macAddress", "mac_address", "mac", "hardwareAddress"):
+        raw = str(source.get(key) or "").strip().lower()
+        compact = re.sub(r"[^0-9a-f]", "", raw)
+        if len(compact) == 12 and re.fullmatch(r"[0-9a-f]{12}", compact):
+            return ":".join(compact[i : i + 2] for i in range(0, 12, 2))
+    return ""
+
+
+def mark_device_stale(
+    device: dict[str, Any],
+    reason: str,
+    *,
+    fallback_last_success_at: int | None = None,
+) -> dict[str, Any]:
+    """Preserve retained data while making freshness explicit."""
+    clone = json.loads(json.dumps(device))
+    current = clone.get("freshness") if isinstance(clone.get("freshness"), dict) else {}
+    try:
+        last_success_at = int(current.get("last_success_at"))
+    except (TypeError, ValueError):
+        last_success_at = int(fallback_last_success_at or 0)
+    clone["freshness"] = {
+        "last_success_at": max(0, last_success_at),
+        "stale": True,
+        "reason": re.sub(r"[^a-z0-9_]+", "_", str(reason).strip().lower()).strip("_")[:64]
+        or "refresh_failed",
+    }
+    return clone
+
+
+def snapshot_stale_after_seconds(cfg: dict[str, Any]) -> int:
+    """Return the maximum age of a live snapshot before consumers must reject it."""
+    try:
+        interval = max(10, min(300, int(cfg.get("poll_interval", 30))))
+    except (TypeError, ValueError):
+        interval = 30
+    return max(60, interval * 3)
+
+
 def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dict[str, Any]) -> dict[str, Any]:
     source = dict(summary)
     source.update({k: v for k, v in detail.items() if v is not None})
     uplink = stats.get("uplink") if isinstance(stats.get("uplink"), dict) else {}
     ports = extract_ports(detail)
+    now = int(time.time())
     return {
         "id": str(source.get("id", "")),
         "name": str(source.get("name") or source.get("model") or "UniFi Switch"),
         "model": str(source.get("model", "Unknown")),
         "firmware": str(source.get("firmwareVersion", "")),
         "ip_address": str(source.get("ipAddress") or ""),
+        "mac_address": normalized_mac_address(source),
         "state": str(source.get("state", "UNKNOWN")).upper(),
         "ports": ports,
         "system": {
@@ -815,6 +858,11 @@ def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dic
             # deterministic device/port join and publishes normalized per-port
             # RX/TX counters. An API `interfaces` object by itself is not proof.
             "per_port_traffic": False,
+        },
+        "freshness": {
+            "last_success_at": now,
+            "stale": False,
+            "reason": "",
         },
     }
 
@@ -1282,7 +1330,12 @@ def secure_directory(path: Path) -> None:
     _verify_permissions(path, 0o700, "UniFi state directory")
 
 
-def write_snapshot(snapshot: Path, devices: list[dict[str, Any]], empty_switch_polls: int = 0) -> None:
+def write_snapshot(
+    snapshot: Path,
+    devices: list[dict[str, Any]],
+    empty_switch_polls: int = 0,
+    stale_after_seconds: int = 180,
+) -> None:
     secure_directory(snapshot.parent)
     if snapshot.is_symlink():
         raise RuntimeError(f"Refusing symlink snapshot path: {snapshot}")
@@ -1291,6 +1344,7 @@ def write_snapshot(snapshot: Path, devices: list[dict[str, Any]], empty_switch_p
         "product": "Switch Vision UniFi2MQTT",
         "version": VERSION,
         "generated_at": int(time.time()),
+        "stale_after_seconds": max(30, int(stale_after_seconds)),
         "empty_switch_polls": max(0, int(empty_switch_polls)),
         "devices": devices,
     }
@@ -1494,6 +1548,44 @@ def snapshot_operation_lock(snapshot: Path):
             os.close(fd)
 
 
+def mark_snapshot_stale(
+    snapshot: Path,
+    reason: str,
+    stale_after_seconds: int | None = None,
+) -> int:
+    """Mark retained device rows stale without fabricating a successful refresh."""
+    if not snapshot.is_file():
+        return 0
+    try:
+        previous = json.loads(snapshot.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return 0
+    if not isinstance(previous, dict) or not isinstance(previous.get("devices"), list):
+        return 0
+    try:
+        generated_at = int(previous.get("generated_at") or 0)
+    except (TypeError, ValueError):
+        generated_at = 0
+    rows = [
+        mark_device_stale(row, reason, fallback_last_success_at=generated_at)
+        for row in previous["devices"]
+        if isinstance(row, dict)
+    ]
+    threshold = stale_after_seconds
+    if threshold is None:
+        try:
+            threshold = int(previous.get("stale_after_seconds") or 180)
+        except (TypeError, ValueError):
+            threshold = 180
+    write_snapshot(
+        snapshot,
+        rows,
+        int(previous.get("empty_switch_polls") or 0),
+        threshold,
+    )
+    return len(rows)
+
+
 def _poll_once_unlocked(
     cfg: dict[str, Any],
     snapshot: Path,
@@ -1515,12 +1607,18 @@ def _poll_once_unlocked(
     normalized = []
     previous_by_id: dict[str, dict[str, Any]] = {}
     previous_empty_switch_polls = 0
+    previous_generated_at = 0
+    stale_after = snapshot_stale_after_seconds(cfg)
     try:
         if snapshot.is_file():
             try:
                 previous = json.loads(snapshot.read_text(encoding="utf-8"))
                 previous_devices = previous.get("devices", []) if isinstance(previous, dict) else []
                 if isinstance(previous, dict):
+                    try:
+                        previous_generated_at = max(0, int(previous.get("generated_at") or 0))
+                    except (TypeError, ValueError):
+                        previous_generated_at = 0
                     try:
                         previous_empty_switch_polls = max(
                             0, int(previous.get("empty_switch_polls", 0))
@@ -1569,7 +1667,14 @@ def _poll_once_unlocked(
         if previous_by_id and not switch_ids:
             empty_switch_polls = previous_empty_switch_polls + 1
             if empty_switch_polls < EMPTY_SWITCH_CONFIRM_POLLS:
-                normalized = list(previous_by_id.values())
+                normalized = [
+                    mark_device_stale(
+                        item,
+                        "empty_switch_set_unconfirmed",
+                        fallback_last_success_at=previous_generated_at,
+                    )
+                    for item in previous_by_id.values()
+                ]
                 for previous_item in normalized:
                     pub.publish_availability(previous_item, "offline")
                 logging.warning(
@@ -1583,6 +1688,7 @@ def _poll_once_unlocked(
                     snapshot,
                     normalized,
                     empty_switch_polls,
+                    stale_after,
                 )
                 write_diagnostics(
                     snapshot,
@@ -1616,8 +1722,13 @@ def _poll_once_unlocked(
             except Exception as exc:
                 previous_item = previous_by_id.get(did)
                 if previous_item is not None:
-                    normalized.append(previous_item)
-                    pub.publish_availability(previous_item, "offline")
+                    stale_item = mark_device_stale(
+                        previous_item,
+                        "device_refresh_failed",
+                        fallback_last_success_at=previous_generated_at,
+                    )
+                    normalized.append(stale_item)
+                    pub.publish_availability(stale_item, "offline")
                     logging.warning(
                         "Device %s refresh failed; preserving previous snapshot data and marking MQTT availability offline: %s",
                         summary.get("name") or did,
@@ -1639,6 +1750,7 @@ def _poll_once_unlocked(
             snapshot,
             normalized,
             0,
+            stale_after,
         )
         write_diagnostics(
             snapshot,

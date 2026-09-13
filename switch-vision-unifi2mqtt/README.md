@@ -14,7 +14,7 @@ The Home Assistant app options now include the optional `api_key` entry so the f
 
 UniFi2MQTT 3.1.0 supports `transport: remote` operation through the Site Manager connector. Remote mode uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID and does not use username/password authentication.
 
-UniFi2MQTT 3.1.3 can keep Local Integration API and Remote Site Manager profiles independently configured; either profile may be used alone, or both may coexist for priority/fallback operation. `priority_transport` is tried first on every poll, `fallback_transport` can select the other profile or `none`, and the priority path is retried automatically after failover. Existing 3.1.0 single-transport fields remain valid migration inputs. Multi-controller entries continue to select `local` or `remote` independently per controller.
+UniFi2MQTT 3.1.4 can keep Local Integration API and Remote Site Manager profiles independently configured; either profile may be used alone, or both may coexist for priority/fallback operation. `priority_transport` is tried first on every poll, `fallback_transport` can select the other profile or `none`, and the priority path is retried automatically after failover. Existing 3.1.0 single-transport fields remain valid migration inputs. Multi-controller entries continue to select `local` or `remote` independently per controller.
 
 ## Multi-controller / multi-site mode
 
