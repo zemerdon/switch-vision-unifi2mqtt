@@ -1,7 +1,7 @@
 name: Switch Vision UniFi2MQTT
-version: "3.1.4"
+version: "4.0.0"
 slug: switch_vision_unifi2mqtt
-description: Read-only multi-controller UniFi Network bridge to MQTT for Switch Vision, with privacy-safe capability diagnostics.
+description: Read-only multi-controller UniFi Network bridge to MQTT for Switch Vision, with local/remote per-port activity enrichment.
 url: https://github.com/zemerdon/switch-vision-unifi2mqtt
 arch:
   - aarch64
@@ -30,7 +30,7 @@ options:
   remote_host_id: "auto"
   remote_site_id: "auto"
   controllers: []
-  poll_interval: "30"
+  poll_interval: "10"
   mqtt_host: ""
   mqtt_port: "1883"
   mqtt_username: ""
