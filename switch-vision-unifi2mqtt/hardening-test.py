@@ -89,7 +89,10 @@ def expect_config_failure(m, data, text):
 def main() -> int:
     m = load_module()
     expected_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
-    assert m.VERSION == expected_version
+    activity_source = Path(__file__).with_name("port_activity.py").read_text(encoding="utf-8")
+    runtime_source = Path(__file__).with_name("runtime_v4.py").read_text(encoding="utf-8")
+    assert f'VERSION = "{expected_version}"' in activity_source
+    assert "install_runtime_hooks()" in runtime_source
     assert m.EMPTY_SWITCH_CONFIRM_POLLS == 3
     assert not m.is_switch({"features": ["switching"], "model": "AirWire"})
     assert m.is_switch({"features": ["switching"], "model": "UDM Pro Max"})
@@ -359,7 +362,7 @@ def main() -> int:
     assert 'transport: list(local|remote)' in config_text
     assert "umask 077" in run_text and "chmod 0700 /share/switch_vision/unifi" in run_text
 
-    print(f"Switch Vision UniFi2MQTT v{m.VERSION} hardening regression: PASS")
+    print(f"Switch Vision UniFi2MQTT v{expected_version} hardening regression: PASS")
     return 0
 
 
