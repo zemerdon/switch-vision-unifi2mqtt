@@ -2,6 +2,35 @@
 
 Optional read-only UniFi Network API bridge for Switch Vision.
 
+## UniFi2MQTT 4.0.0
+
+UniFi2MQTT 4.0.0 keeps the official Network Integration API authoritative for discovery, device identity, port inventory, link state, negotiated speed, connector and PoE data, then adds non-fatal per-port traffic enrichment from the read-only classic Network `stat/device` endpoint.
+
+The enrichment path is supported through both transports:
+
+- **Local** — directly reachable UniFi OS / Network controller using a local Integration API key.
+- **Remote** — UniFi Site Manager connector using a Site Manager API key and `/v1/connector/consoles/<host_id>/proxy/network/...`.
+
+No username/password authentication is used.
+
+A normalized hardware MAC must match exactly one classic device row, and official `idx` must match exactly one classic `port_idx`. Missing or ambiguous joins fail closed. Classic telemetry never becomes switch-discovery authority: if it is unavailable, official link/speed/PoE telemetry remains active and `per_port_traffic` is false.
+
+Activity is derived from cumulative RX/TX byte counters. The first sample establishes a baseline; an RX or TX increase produces activity; unchanged counters are idle; counter decreases establish a new reset/reboot baseline; and DOWN ports never report activity.
+
+The v4 MQTT extension includes retained state for:
+
+```text
+port/<n>/traffic_available
+port/<n>/activity
+port/<n>/activity_at
+port/<n>/rx_bytes
+port/<n>/tx_bytes
+```
+
+Activity is added to Home Assistant MQTT Discovery. RX/TX totals remain available as retained MQTT state without creating extra HA entities for every counter on every physical port.
+
+The activity path was live-tested on a USW Flex Mini (`USMINI`) through both Local and Remote APIs, including approximately 100 Mbit/s of traffic on a port negotiated at 1 Gbit/s.
+
 ## Single-controller mode
 
 Existing installs continue to use the established local fields. `transport` defaults to `local`:
@@ -10,11 +39,9 @@ Existing installs continue to use the established local fields. `transport` defa
 - `api_key`
 - `site_id` (`auto` by default)
 
-The Home Assistant app options now include the optional `api_key` entry so the field is available in the app configuration UI. When `controllers` is empty, the launcher transfers directly to the existing single-controller runtime so current MQTT topics, Home Assistant unique IDs, snapshots and retirement behaviour remain unchanged.
+Remote operation uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID.
 
-UniFi2MQTT 3.1.0 supports `transport: remote` operation through the Site Manager connector. Remote mode uses a Site Manager API key, resolves a `host_id` through `/v1/hosts`, and then resolves the actual Network Integration site through `/v1/connector/consoles/<host_id>/proxy/network/integration/v1/sites`. It never substitutes the separate Site Manager `/v1/sites` identifier for the Network site UUID and does not use username/password authentication.
-
-UniFi2MQTT 3.1.4 can keep Local Integration API and Remote Site Manager profiles independently configured; either profile may be used alone, or both may coexist for priority/fallback operation. `priority_transport` is tried first on every poll, `fallback_transport` can select the other profile or `none`, and the priority path is retried automatically after failover. Existing 3.1.0 single-transport fields remain valid migration inputs. Multi-controller entries continue to select `local` or `remote` independently per controller.
+Local Integration API and Remote Site Manager profiles can be independently configured. Either profile may be used alone, or both may coexist for priority/fallback operation. `priority_transport` is tried first on every poll, `fallback_transport` can select the other profile or `none`, and the priority path is retried automatically after failover. Legacy single-transport fields remain valid migration inputs.
 
 ## Multi-controller / multi-site mode
 
@@ -35,16 +62,18 @@ Example:
 ```yaml
 controllers:
   - id: home
+    transport: local
     controller_url: https://10.0.0.1
     api_key: YOUR_HOME_API_KEY
     site_id: auto
   - id: branch
-    controller_url: https://10.20.0.1
-    api_key: YOUR_BRANCH_API_KEY
+    transport: remote
+    host_id: auto
+    api_key: YOUR_SITE_MANAGER_API_KEY
     site_id: Branch Office
 ```
 
-The same controller can appear more than once with different site selections. Local-mode remote controllers must already be reachable from Home Assistant, for example over a site-to-site VPN. Remote transport can instead use the Site Manager connector over verified HTTPS.
+The same local controller can appear more than once with different site selections. Local-mode controllers must be reachable from Home Assistant. Remote transport uses the Site Manager connector over verified HTTPS.
 
 Multi-controller mode isolates each controller's previous snapshot, empty-set confirmation and retirement state under the app-private persistent `/data/multi_controller_state/` area, then writes a collision-safe aggregate to `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery. A failed controller preserves its previous private snapshot and is marked unavailable without retiring devices from healthy controllers.
 
@@ -54,15 +83,15 @@ Removing a configured controller retires only that controller's retained MQTT an
 
 By default the app resolves Home Assistant's Supervisor MQTT service automatically. Custom MQTT broker overrides remain supported.
 
-Multi-controller mode uses one MQTT connection and opaque controller-scoped device identities so duplicate raw UniFi device IDs cannot collide. Composite IDs are bounded to the Core websocket device-ID contract.
+Multi-controller mode uses one MQTT connection and opaque controller-scoped device identities so duplicate raw UniFi device IDs cannot collide. The v4 activity extension reuses the exact same scoped device identity as the base switch topics.
 
 ## Privacy and diagnostics
 
 Credentials and operator controller labels are never copied into privacy-safe diagnostics. Aggregate diagnostics report controller counts/status only, without controller IDs, URLs or API keys.
 
-Private per-controller snapshots remain outside `/share/switch_vision`, so Support My Switch only sees the established aggregate snapshot and privacy-safe diagnostics. Its existing UniFi snapshot sanitizer masks aggregate device IDs before a contribution package is built.
+Private per-controller snapshots remain outside `/share/switch_vision`, so Support My Switch only sees the established aggregate snapshot and privacy-safe diagnostics. Raw classic `stat/device` payloads are never persisted; sensitive controller fields from that response are not admitted to the normalized traffic contract.
 
-The startup classic Network API probe remains read-only and non-fatal. In multi-controller mode it probes each configured controller/site independently and aggregates only privacy-safe counter-presence results.
+The standalone classic capability probe remains available as a privacy-safe diagnostic/regression utility, but 4.0 runtime traffic enrichment no longer depends on a startup evidence file.
 
 ## Data
 
@@ -76,7 +105,6 @@ Primary privacy-safe diagnostics:
 
 ```text
 /share/switch_vision/unifi/diagnostics.json
-/share/switch_vision/unifi/classic_port_traffic_probe.json
 ```
 
 Private persistent controller state:
