@@ -2,6 +2,7 @@
 
 ## v4.0.0
 
+- Keep normalized hardware MAC as the sole deterministic device join key; classic `external_id` remains advisory because its namespace is not assumed to match the Integration API device UUID.
 - Add native per-port traffic/activity enrichment using the read-only classic Network `stat/device` endpoint while keeping the official Integration API authoritative for discovery, identity, port inventory, link state, negotiated speed and PoE.
 - Add deterministic hardware-MAC and port-index joins and publish cumulative RX/TX counters plus per-port Activity state; counter decreases are treated as reset baselines rather than traffic.
 - Support the same enrichment over both directly reachable Local controllers and the UniFi Site Manager Remote connector; both paths were live-validated on a USW Flex Mini.

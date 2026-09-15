@@ -184,21 +184,17 @@ def enrich_device(
 ) -> dict[str, Any]:
     """Join one official Integration device to one classic device row.
 
-    The join is intentionally strict: normalized hardware MAC is mandatory,
-    classic external_id must agree when present, and every official port needs
-    exactly one classic port_idx with valid cumulative RX/TX byte counters before
-    the device-level per_port_traffic capability becomes true.
+    The join is intentionally strict: normalized hardware MAC is the sole
+    device join key. Classic external_id is not assumed to share the official
+    Integration API ID namespace and is therefore advisory only. Every official
+    port needs exactly one classic port_idx with valid cumulative RX/TX byte
+    counters before the device-level per_port_traffic capability becomes true.
     """
     clone = json.loads(json.dumps(device))
     now = int(sampled_at if sampled_at is not None else time.time())
     device_mac = normalize_mac(clone.get("mac_address"))
     classic_mac = normalize_mac(classic.get("mac"))
     if not device_mac or device_mac != classic_mac:
-        return mark_traffic_unavailable(clone, previous)
-
-    external_id = str(classic.get("external_id") or "").strip()
-    device_id = str(clone.get("id") or "").strip()
-    if external_id and device_id and external_id != device_id:
         return mark_traffic_unavailable(clone, previous)
 
     classic_ports = _classic_ports(classic)
