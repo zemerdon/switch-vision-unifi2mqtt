@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.0.0
+
+- Add native per-port traffic/activity enrichment using the read-only classic Network `stat/device` endpoint while keeping the official Integration API authoritative for discovery, identity, port inventory, link state, negotiated speed and PoE.
+- Add deterministic hardware-MAC and port-index joins and publish cumulative RX/TX counters plus per-port Activity state; counter decreases are treated as reset baselines rather than traffic.
+- Support the same enrichment over both directly reachable Local controllers and the UniFi Site Manager Remote connector; both paths were live-validated on a USW Flex Mini.
+- Add retained `port/<n>/activity`, `activity_at`, `rx_bytes`, `tx_bytes` and traffic-availability state, with Home Assistant Discovery for Activity only to avoid excessive entity counts.
+- Keep classic telemetry non-fatal: if enrichment is unavailable, official switch/link/speed/PoE telemetry remains active and `per_port_traffic` fails closed.
+- Change the new-install polling default to 10 seconds to align with the observed UniFi controller traffic refresh cadence.
+- Add USW Flex Mini (`USMINI`) live hardware validation, including sustained approximately 100 Mbit/s traffic over a 1 Gbit/s link through both Local and Remote API paths.
+
 ## v3.1.4
 
 - Preserve the last complete normalized device snapshot when a transient whole-poll failure or per-device detail refresh fails, mark affected telemetry stale/offline, and avoid silently replacing known port topology with partial data.
