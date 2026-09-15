@@ -124,6 +124,7 @@ jobs:
           python switch-vision-unifi2mqtt/self-test.py
           python switch-vision-unifi2mqtt/hardening-test.py
           python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+          python switch-vision-unifi2mqtt/activity-test.py
           python switch-vision-unifi2mqtt/classic-port-probe-test.py
           python switch-vision-unifi2mqtt/multi-controller-test.py
           python switch-vision-unifi2mqtt/multi-controller-probe-test.py
