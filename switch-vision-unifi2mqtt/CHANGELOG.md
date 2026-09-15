@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.0.1
+
+- Make **10 seconds** the authoritative UniFi polling default across Home Assistant app options and every runtime fallback path, including legacy single-controller, Local/Remote priority-fallback, multi-controller scheduling and snapshot-staleness calculations.
+- Keep explicit operator-selected values from 10 through 300 seconds supported; this patch only removes the inconsistent internal 30-second fallback.
+- Align the runtime default with the live-validated Switch Vision Core activity contract: UniFi2MQTT samples at 10 seconds and Core holds detected activity for 12 seconds, preventing sustained traffic from dropping between polls.
+- Add permanent regression coverage proving an omitted `poll_interval` resolves to 10 seconds.
+- Preserve all UniFi 4.0 Local/Remote per-port traffic joins, privacy boundaries, MQTT topics, device identity and fail-closed counter/reset behavior unchanged.
+
 ## v4.0.0
 
 - Keep normalized hardware MAC as the sole deterministic device join key; classic `external_id` remains advisory because its namespace is not assumed to match the Integration API device UUID.

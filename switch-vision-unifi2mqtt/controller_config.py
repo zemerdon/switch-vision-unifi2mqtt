@@ -171,7 +171,7 @@ def _mqtt_global_config(data: dict[str, Any]) -> dict[str, Any]:
         cfg["mqtt_ca"] = ""
 
     try:
-        poll_interval = int(cfg.get("poll_interval", 30))
+        poll_interval = int(cfg.get("poll_interval", 10))
     except (TypeError, ValueError) as exc:
         raise RuntimeError("poll_interval must be an integer") from exc
     if not 10 <= poll_interval <= 300:

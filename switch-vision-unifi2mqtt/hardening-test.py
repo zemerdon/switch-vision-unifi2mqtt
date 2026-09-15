@@ -48,7 +48,7 @@ def config_payload(**updates):
         "api_key": "fixture-key",
         "verify_ssl": "true",
         "allow_insecure_http": "false",
-        "poll_interval": "30",
+        "poll_interval": "10",
         "mqtt_host": "mqtt.local",
         "mqtt_port": "1883",
         "mqtt_username": "",
@@ -100,8 +100,13 @@ def main() -> int:
     cfg = load_cfg(m, config_payload())
     assert cfg["controller_url"] == "https://192.0.2.1"
     assert cfg["mqtt_port"] == "1883"
-    assert cfg["poll_interval"] == "30"
+    assert cfg["poll_interval"] == 10
     assert cfg["mqtt_topic_prefix"] == "switch_vision/unifi"
+
+    default_payload = config_payload()
+    default_payload.pop("poll_interval")
+    default_cfg = load_cfg(m, default_payload)
+    assert default_cfg["poll_interval"] == 10
 
     assert cfg["transport"] == "local"
     assert cfg["host_id"] == "auto"
@@ -319,7 +324,7 @@ def main() -> int:
                 assert preserved["model"] == previous_device["model"]
                 assert preserved["freshness"]["stale"] is True
                 assert preserved["freshness"]["reason"] == "empty_switch_set_unconfirmed"
-                assert doc["stale_after_seconds"] == 90
+                assert doc["stale_after_seconds"] == 60
                 assert doc["empty_switch_polls"] == expected_streak
                 assert GuardPublisher.last is not None
                 assert GuardPublisher.last.retired == []

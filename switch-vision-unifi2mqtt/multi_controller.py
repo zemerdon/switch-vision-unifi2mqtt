@@ -507,7 +507,7 @@ def _run_single_priority_fallback(config: Path, snapshot: Path) -> int:
             logging.warning("Could not persist UniFi MQTT diagnostics.")
         return 2
 
-    interval = int(global_cfg.get("poll_interval", 30))
+    interval = int(global_cfg.get("poll_interval", 10))
     try:
         while not core.STOP:
             started = time.monotonic()
@@ -597,7 +597,7 @@ def main() -> int:
             logging.warning("Could not persist multi-controller MQTT diagnostics.")
         return 2
 
-    interval = int(global_cfg.get("poll_interval", 30))
+    interval = int(global_cfg.get("poll_interval", 10))
     try:
         while not core.STOP:
             started = time.monotonic()

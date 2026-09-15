@@ -301,11 +301,12 @@ def load_config(path: Path) -> dict[str, Any]:
         data["mqtt_ca"] = ""
 
     try:
-        poll_interval = int(data.get("poll_interval", 30))
+        poll_interval = int(data.get("poll_interval", 10))
     except (TypeError, ValueError) as exc:
         raise RuntimeError("poll_interval must be an integer") from exc
     if not 10 <= poll_interval <= 300:
         raise RuntimeError("poll_interval must be between 10 and 300 seconds")
+    data["poll_interval"] = poll_interval
     data["mqtt_topic_prefix"] = validate_topic_prefix(
         "mqtt_topic_prefix", data.get("mqtt_topic_prefix", "switch_vision/unifi")
     )
@@ -824,9 +825,9 @@ def mark_device_stale(
 def snapshot_stale_after_seconds(cfg: dict[str, Any]) -> int:
     """Return the maximum age of a live snapshot before consumers must reject it."""
     try:
-        interval = max(10, min(300, int(cfg.get("poll_interval", 30))))
+        interval = max(10, min(300, int(cfg.get("poll_interval", 10))))
     except (TypeError, ValueError):
-        interval = 30
+        interval = 10
     return max(60, interval * 3)
 
 
@@ -1809,7 +1810,7 @@ def main() -> int:
                 "configuration diagnostics."
             )
         return 2
-    interval = max(10, min(300, int(cfg.get("poll_interval", 30))))
+    interval = max(10, min(300, int(cfg.get("poll_interval", 10))))
 
     try:
         pub = Publisher(cfg)

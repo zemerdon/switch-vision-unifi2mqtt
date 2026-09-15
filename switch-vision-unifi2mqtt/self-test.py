@@ -529,7 +529,7 @@ def main() -> int:
             assert kept[0]["model"] == previous_device["model"]
             assert kept[0]["freshness"]["stale"] is True
             assert kept[0]["freshness"]["reason"] == "device_refresh_failed"
-            assert refreshed["stale_after_seconds"] == 90
+            assert refreshed["stale_after_seconds"] == 60
             assert CapturePublisher.last is not None
             assert ("keep", "offline") in CapturePublisher.last.availability
     finally:

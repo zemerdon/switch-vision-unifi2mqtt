@@ -10,6 +10,7 @@ It reads adopted UniFi switching devices through the official read-only UniFi Ne
 - Uses API-key authentication only; no UniFi username/password session is required.
 - Keeps the official UniFi Network Integration API authoritative for device discovery, identity, port inventory, link state, negotiated speed, connector and PoE data.
 - Uses the read-only classic Network `stat/device` endpoint as non-fatal per-port traffic enrichment in UniFi2MQTT 4.0.0.
+- Defaults polling to 10 seconds across both the Home Assistant app schema and runtime fallback paths, matching Switch Vision Core's validated 12-second activity hold.
 - Supports the same traffic enrichment directly against a Local controller and through the Remote UniFi Site Manager connector.
 - Publishes retained MQTT state and Home Assistant MQTT Discovery entities.
 - Writes `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery.

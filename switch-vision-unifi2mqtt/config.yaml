@@ -1,5 +1,5 @@
 name: Switch Vision UniFi2MQTT
-version: "4.0.0"
+version: "4.0.1"
 slug: switch_vision_unifi2mqtt
 description: Read-only multi-controller UniFi Network bridge to MQTT for Switch Vision, with local/remote per-port activity enrichment.
 url: https://github.com/zemerdon/switch-vision-unifi2mqtt

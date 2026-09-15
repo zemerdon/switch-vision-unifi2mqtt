@@ -2,7 +2,7 @@
 set -eu
 umask 077
 
-VERSION="4.0.0"
+VERSION="4.0.1"
 bashio::log.info "Switch Vision UniFi2MQTT v${VERSION} starting."
 
 mkdir -p /share/switch_vision/unifi
