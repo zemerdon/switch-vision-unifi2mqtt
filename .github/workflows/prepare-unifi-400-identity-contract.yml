@@ -1,0 +1,61 @@
+name: Prepare UniFi2MQTT 4.0 identity contract
+
+on:
+  push:
+    branches:
+      - feat/unifi-4.0.0-port-activity
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/unifi-4.0.0-port-activity
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply MAC-authoritative identity contract
+        run: python switch-vision-unifi2mqtt/patch_external_id_contract.py
+
+      - name: Run 4.0 activity regression
+        working-directory: switch-vision-unifi2mqtt
+        run: python activity-test.py
+
+      - name: Run hardening regression
+        working-directory: switch-vision-unifi2mqtt
+        run: python hardening-test.py
+
+      - name: Python syntax
+        run: python -m py_compile switch-vision-unifi2mqtt/port_activity.py switch-vision-unifi2mqtt/runtime_v4.py
+
+      - name: Commit prepared 4.0 tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No generated changes to commit."
+            exit 0
+          fi
+          git config user.name "Switch Vision SV-Dev"
+          git config user.email "switch-vision@users.noreply.github.com"
+          git add \
+            README.md \
+            CHANGELOG.md \
+            switch-vision-unifi2mqtt/README.md \
+            switch-vision-unifi2mqtt/CHANGELOG.md \
+            switch-vision-unifi2mqtt/port_activity.py \
+            switch-vision-unifi2mqtt/activity-test.py
+          git commit -m "UniFi2MQTT 4.0: make MAC the authoritative traffic join"
+          git push origin HEAD:feat/unifi-4.0.0-port-activity
