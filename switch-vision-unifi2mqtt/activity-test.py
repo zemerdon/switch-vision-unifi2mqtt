@@ -127,10 +127,17 @@ def main() -> int:
     assert port(down, 4)["activity"] is False
     assert port(down, 4)["activity_at"] == 0
 
-    # Device identity and port joins fail closed.
-    wrong_id = classic_device()
-    wrong_id["external_id"] = "another-device"
-    failed = activity.enrich_device(official_device(), wrong_id, first)
+    # Device identity is MAC-authoritative. Classic external_id is advisory
+    # because its namespace is not proven to match the Integration API UUID.
+    advisory_id = classic_device()
+    advisory_id["external_id"] = "another-device"
+    matched = activity.enrich_device(official_device(), advisory_id, first)
+    assert matched["api_capabilities"]["per_port_traffic"] is True
+    assert port(matched, 4)["traffic"]["available"] is True
+
+    wrong_mac = classic_device()
+    wrong_mac["mac"] = "58:d6:1f:14:6e:41"
+    failed = activity.enrich_device(official_device(), wrong_mac, first)
     assert failed["api_capabilities"]["per_port_traffic"] is False
     assert port(failed, 4)["traffic"]["available"] is False
 

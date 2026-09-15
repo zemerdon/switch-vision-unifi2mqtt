@@ -56,7 +56,7 @@ Classic Network stat/device
   -> activity enrichment
 ```
 
-A device is enriched only when its normalized hardware MAC matches exactly one classic device row. Physical ports are then joined by official `idx` to classic `port_idx`. If a device or port join is missing or ambiguous, traffic support fails closed rather than attaching counters to the wrong switch.
+A device is enriched only when its normalized hardware MAC matches exactly one classic device row. Classic `external_id` is advisory only because its namespace is not assumed to match the Integration API device UUID. Physical ports are then joined by official `idx` to classic `port_idx`. If a device or port join is missing or ambiguous, traffic support fails closed rather than attaching counters to the wrong switch.
 
 Activity is derived from cumulative byte counters:
 
