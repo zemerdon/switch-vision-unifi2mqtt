@@ -7,11 +7,13 @@ It reads adopted UniFi switching devices through the official read-only UniFi Ne
 
 ## What it does
 
-- Uses the UniFi Network Integration API with `X-API-KEY` authentication.
-- Reads adopted switching devices, device details and latest statistics.
+- Uses API-key authentication only; no UniFi username/password session is required.
+- Keeps the official UniFi Network Integration API authoritative for device discovery, identity, port inventory, link state, negotiated speed, connector and PoE data.
+- Uses the read-only classic Network `stat/device` endpoint as non-fatal per-port traffic enrichment in UniFi2MQTT 4.0.0.
+- Supports the same traffic enrichment directly against a Local controller and through the Remote UniFi Site Manager connector.
 - Publishes retained MQTT state and Home Assistant MQTT Discovery entities.
 - Writes `/share/switch_vision/unifi/devices.json` for Switch Vision Discovery.
-- Writes privacy-safe `/share/switch_vision/unifi/diagnostics.json` on successful and failed polling so Support My Switch can diagnose controller/classification problems without exposing credentials or device identifiers.
+- Writes privacy-safe `/share/switch_vision/unifi/diagnostics.json` on successful and failed polling so Support My Switch can diagnose controller/classification problems without exposing credentials or private device identifiers.
 - Keeps UniFi API collection separate from SNMP2MQTT.
 - Preserves the previous device snapshot if a transient per-device API refresh fails.
 - Requires three consecutive successful no-switch polls before retiring every previously known switch.
@@ -23,6 +25,7 @@ It reads adopted UniFi switching devices through the official read-only UniFi Ne
 
 Current Switch Vision evidence includes:
 
+- USW Flex Mini (`USMINI`) — local and remote per-port activity validation
 - USW Lite 16 PoE
 - USW Pro 24 PoE
 - USW Enterprise 8 PoE
@@ -31,6 +34,64 @@ Current Switch Vision evidence includes:
 - UDM Pro gateway/switch hybrid
 
 Support remains contribution-driven and model validation status is maintained by the main Switch Vision device registry.
+
+## UniFi2MQTT 4.0 per-port activity
+
+UniFi2MQTT 4.0.0 adds native per-port traffic/activity telemetry without making the classic API responsible for switch discovery.
+
+The collection contract is deliberately split:
+
+```text
+Official Integration API
+  -> device discovery / identity
+  -> port inventory
+  -> link state
+  -> negotiated speed
+  -> connector / PoE
+
+Classic Network stat/device
+  -> cumulative per-port RX/TX bytes
+  -> packets / errors / drops when present
+  -> uplink marker
+  -> activity enrichment
+```
+
+A device is enriched only when its normalized hardware MAC matches exactly one classic device row. Physical ports are then joined by official `idx` to classic `port_idx`. If a device or port join is missing or ambiguous, traffic support fails closed rather than attaching counters to the wrong switch.
+
+Activity is derived from cumulative byte counters:
+
+```text
+first sample           -> baseline, no activity
+RX or TX increases     -> activity
+counters unchanged     -> idle
+counter decreases      -> reset/reboot baseline, no activity
+port DOWN              -> no activity
+```
+
+The controller refreshes classic traffic counters at a coarser cadence than HTTP requests, so cumulative counter deltas are authoritative. Rate-like `*-r` fields are not used to decide activity.
+
+The v4 MQTT extension includes retained state under each physical port such as:
+
+```text
+port/<n>/traffic_available
+port/<n>/activity
+port/<n>/activity_at
+port/<n>/rx_bytes
+port/<n>/tx_bytes
+```
+
+Activity is exposed through Home Assistant MQTT Discovery. RX/TX cumulative counters remain available as MQTT state without automatically creating two additional Home Assistant entities for every port.
+
+If classic enrichment is unavailable, the switch remains online through the official Integration API and continues to provide supported link/speed/PoE/system telemetry. `per_port_traffic` simply remains false until a deterministic enrichment join succeeds again.
+
+### Live validation
+
+The 4.0.0 activity path was live-tested on a USW Flex Mini over both transports:
+
+- **Local:** direct controller `/proxy/network/api/s/<site>/stat/device`
+- **Remote:** `https://api.ui.com/v1/connector/consoles/<host_id>/proxy/network/api/s/<site>/stat/device`
+
+Both paths returned the same per-port cumulative counters. Remote activity was also validated while moving approximately 100 Mbit/s through a port negotiated at 1 Gbit/s.
 
 ## Home Assistant App repository
 
@@ -46,17 +107,15 @@ Switch Vision Installer can manage this component as an **optional** UniFi suppo
 
 ### Existing single-controller mode
 
-The existing local configuration remains supported unchanged. `transport` defaults to `local`, so current installs that do not set it continue to use the directly reachable UniFi Network Integration API with:
+The existing local configuration remains supported. `transport` defaults to `local`, so installs that do not set it continue to use the directly reachable UniFi Network API with:
 
 - `controller_url`
 - `api_key`
 - `site_id` (defaults to `auto`)
 
-The app configuration now includes the optional `api_key` field in `options`, so Home Assistant can expose it in the app configuration UI instead of requiring an out-of-band options edit. Existing saved keys are preserved.
+The app configuration includes an optional `api_key` field so Home Assistant can expose it in the app configuration UI. Existing saved keys are preserved.
 
-When `controllers` is empty, the compatibility launcher hands control directly to the existing single-controller runtime. This preserves the established MQTT topics, Home Assistant unique IDs, snapshot layout, site resolution, retirement behaviour and diagnostics for existing installations.
-
-Site selection continues to work as before:
+Site selection works as follows:
 
 - `site_id` defaults to `auto`.
 - UniFi2MQTT queries the Network Integration site list and resolves the actual Network site UUID automatically.
@@ -65,15 +124,15 @@ Site selection continues to work as before:
 
 ### Site Manager connector transport
 
-The current development source also supports `transport: remote` for consoles that are not directly reachable from Home Assistant. This mode uses a UniFi Site Manager API key with `https://api.ui.com` and the official console connector. It does not use a UniFi username/password session.
+Set `transport: remote` for consoles that are not directly reachable from Home Assistant. This mode uses a UniFi Site Manager API key with `https://api.ui.com` and the official console connector. It does not use a UniFi username/password session.
 
-Remote mode first resolves a Site Manager `host_id` (or accepts `host_id: auto` when exactly one usable Network host is visible), then sends the same read-only Network Integration API calls through:
+Remote mode first resolves a Site Manager `host_id` (or accepts `host_id: auto` when exactly one usable Network host is visible), then sends Network API calls through:
 
 ```text
-https://api.ui.com/v1/connector/consoles/<host_id>/proxy/network/integration/v1/...
+https://api.ui.com/v1/connector/consoles/<host_id>/proxy/network/...
 ```
 
-The Site Manager site identifier returned by `/v1/sites` is deliberately not substituted for the Network Integration site UUID. UniFi2MQTT resolves the Network site through the connector itself before listing devices. Remote transport always uses verified HTTPS; the local `verify_ssl` / `allow_insecure_http` switches do not weaken the cloud connector.
+The Site Manager site identifier returned by `/v1/sites` is deliberately not substituted for the Network Integration site UUID. UniFi2MQTT resolves the Network site through the connector itself. Remote transport always uses verified HTTPS; local `verify_ssl` / `allow_insecure_http` switches do not weaken the cloud connector.
 
 Example remote configuration:
 
@@ -84,13 +143,11 @@ site_id: auto
 api_key: YOUR_SITE_MANAGER_API_KEY
 ```
 
-Site Manager connector transport is included in **UniFi2MQTT 3.1.0**.
+### Local / Remote priority and fallback
 
-### Local / Remote priority and fallback (3.1.1)
+UniFi2MQTT can keep Local Integration API and Remote Site Manager credentials configured at the same time. `priority_transport` selects the path attempted first on every poll; `fallback_transport` may select the other path or `none`. If the priority path is unavailable, the bridge uses the configured fallback for that poll and retries the priority path on the next poll.
 
-UniFi2MQTT 3.1.1 can keep Local Integration API and Remote Site Manager credentials configured at the same time. `priority_transport` selects the path attempted first on every poll; `fallback_transport` may select the other path or `none`. If the priority path is unavailable, the bridge uses the configured fallback for that poll and retries the priority path again on the next poll, so recovery is automatic.
-
-The legacy `transport`, `controller_url`, `host_id`, `site_id`, and `api_key` fields remain accepted as migration inputs for existing 3.1.0 installs. Multi-controller `controllers` entries remain independent of the single-controller priority/fallback plan.
+The legacy `transport`, `controller_url`, `host_id`, `site_id`, and `api_key` fields remain accepted as migration inputs. Multi-controller `controllers` entries remain independent of the single-controller priority/fallback plan.
 
 ### Multi-controller / multi-site mode
 
@@ -109,20 +166,22 @@ Example:
 ```yaml
 controllers:
   - id: home
+    transport: local
     controller_url: https://10.0.0.1
     site_id: auto
     api_key: YOUR_HOME_API_KEY
-  - id: remote
-    controller_url: https://10.20.0.1
+  - id: branch
+    transport: remote
+    host_id: auto
     site_id: Branch Office
-    api_key: YOUR_REMOTE_API_KEY
+    api_key: YOUR_SITE_MANAGER_API_KEY
 ```
 
-The same controller URL may be listed more than once with different `site_id` values when multiple sites need to run concurrently. Local-mode controllers must be reachable by the Home Assistant host. Remote-mode entries may instead use the Site Manager connector with a Site Manager API key and host ID; username/password authentication is not used.
+The same controller URL may be listed more than once with different `site_id` values when multiple sites need to run concurrently. Local-mode controllers must be reachable by the Home Assistant host. Remote-mode entries use the Site Manager connector; username/password authentication is not used.
 
 Multi-controller mode isolates each controller's retirement/previous-snapshot state inside the Home Assistant app's private persistent `/data/multi_controller_state/` area. That private state is intentionally outside `/share/switch_vision`, so Support My Switch does not admit raw per-controller snapshots or operator controller labels. A failed controller therefore cannot trigger retirement of healthy devices from another controller.
 
-The Discovery-facing aggregate remains `/share/switch_vision/unifi/devices.json`. It uses opaque controller-scoped composite device IDs to prevent duplicate raw UniFi device IDs from colliding. The same bounded composite ID is used for Home Assistant MQTT device identity, and Support My Switch's existing UniFi snapshot sanitizer masks it before a contribution package is built.
+The Discovery-facing aggregate remains `/share/switch_vision/unifi/devices.json`. It uses opaque controller-scoped composite device IDs to prevent duplicate raw UniFi device IDs from colliding. The same bounded composite identity is used for Home Assistant MQTT device identity.
 
 Removing a controller from configuration retires only that controller's retained MQTT/Home Assistant Discovery topics.
 
@@ -138,13 +197,7 @@ Normalized aggregate data is written to:
 /share/switch_vision/unifi/devices.json
 ```
 
-The current UniFi API provides reliable link, negotiated speed, connector, PoE and system/uplink information. Per-port traffic is not fabricated when the Integration API does not expose it.
-
-## Activity LEDs
-
-Switch Vision per-port Activity LEDs require per-port RX/TX traffic data. UniFi2MQTT also performs a read-only, non-fatal capability probe against the classic Network API to determine whether candidate per-port byte counters exist. Probe results are privacy-safe and do not store raw controller payloads.
-
-The probe is evidence-only: candidate counter fields, an API `interfaces` object, or aggregate gateway/uplink rates do not enable `per_port_traffic`. That capability remains false until a deterministic device/port join is proven and UniFi2MQTT actually publishes normalized per-port RX/TX counters. Where reliable per-port traffic is unavailable, SNMP remains the supported activity source. UniFi-only installations still provide supported port link state, negotiated speed, connector, PoE and system telemetry.
+The normalized per-port object can include official link/speed/PoE fields plus a `traffic` block, `activity`, and `activity_at` when deterministic classic enrichment succeeds. Raw classic controller payloads are never stored in the shared snapshot.
 
 ## Validation
 
@@ -154,12 +207,14 @@ Run the offline regression tests with:
 python3 switch-vision-unifi2mqtt/self-test.py
 python3 switch-vision-unifi2mqtt/hardening-test.py
 python3 switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+python3 switch-vision-unifi2mqtt/activity-test.py
 python3 switch-vision-unifi2mqtt/classic-port-probe-test.py
 python3 switch-vision-unifi2mqtt/multi-controller-test.py
 python3 switch-vision-unifi2mqtt/multi-controller-probe-test.py
+python3 switch-vision-unifi2mqtt/optional-profile-test.py
 ```
 
-The permanent GitHub Actions validation workflow checks Python and shell syntax, Supervisor MQTT wrapper behaviour, release/configuration consistency, legacy and multi-controller regressions, privacy-safe capability probing, and real amd64/arm64 container builds.
+The permanent GitHub Actions validation workflow checks Python and shell syntax, Supervisor MQTT wrapper behaviour, release/configuration consistency, Local/Remote activity regressions, legacy and multi-controller regressions, privacy-safe capability probing, and real amd64/arm64 container builds.
 
 ## Related projects
 
