@@ -142,6 +142,7 @@ def _unavailable_port(
     clone["traffic"] = traffic
     clone["activity"] = False
     clone["activity_at"] = 0
+    clone.pop("counter_reset", None)
     return clone
 
 
@@ -160,12 +161,17 @@ def mark_traffic_unavailable(
 
     previous_by_idx = _previous_ports(previous)
     ports = clone.get("ports") if isinstance(clone.get("ports"), list) else []
-    clone["ports"] = [
-        _unavailable_port(port, previous_by_idx.get(int(port.get("idx", 0))))
-        if isinstance(port, dict)
-        else port
-        for port in ports
-    ]
+    unavailable: list[Any] = []
+    for port in ports:
+        if not isinstance(port, dict):
+            unavailable.append(port)
+            continue
+        try:
+            idx = int(port.get("idx"))
+        except (TypeError, ValueError):
+            idx = -1
+        unavailable.append(_unavailable_port(port, previous_by_idx.get(idx)))
+    clone["ports"] = unavailable
     return clone
 
 
@@ -350,6 +356,21 @@ def retained_topics_for_device_v4(
     return topics
 
 
+def _publisher_device(pub: core.Publisher, device: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact MQTT identity used by the active publisher.
+
+    Multi-controller mode scopes raw UniFi device IDs before publishing. Reusing
+    that mapping here keeps the v4 traffic topics collision-safe and aligned
+    with the already-published core device topics.
+    """
+    mapper = getattr(pub, "_namespaced_device", None)
+    if callable(mapper):
+        mapped = mapper(device)
+        if isinstance(mapped, dict):
+            return mapped
+    return dict(device)
+
+
 def publish_enriched_device(pub: core.Publisher, device: dict[str, Any]) -> None:
     """Publish only the v4 traffic extension after the core device publish.
 
@@ -357,16 +378,17 @@ def publish_enriched_device(pub: core.Publisher, device: dict[str, Any]) -> None
     additional Home Assistant entities for every physical port. Activity is the
     one new HA binary sensor because Switch Vision consumes it visually.
     """
-    did = core.slug(device.get("id") or device.get("name"))
+    effective = _publisher_device(pub, device)
+    did = core.slug(effective.get("id") or effective.get("name"))
     base = f"{pub.topic_prefix}/{did}"
     ha_device = {
         "identifiers": [f"switch_vision_unifi_{did}"],
-        "name": device.get("name") or "UniFi Switch",
+        "name": effective.get("name") or "UniFi Switch",
         "manufacturer": "Ubiquiti",
-        "model": device.get("model") or "Unknown",
-        "sw_version": device.get("firmware") or None,
+        "model": effective.get("model") or "Unknown",
+        "sw_version": effective.get("firmware") or None,
     }
-    ports = device.get("ports") if isinstance(device.get("ports"), list) else []
+    ports = effective.get("ports") if isinstance(effective.get("ports"), list) else []
     for port in ports:
         if not isinstance(port, dict) or port.get("idx") is None:
             continue
@@ -410,6 +432,11 @@ def _snapshot_payload(snapshot: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _is_stale(device: dict[str, Any]) -> bool:
+    freshness = device.get("freshness") if isinstance(device.get("freshness"), dict) else {}
+    return bool(freshness.get("stale"))
+
+
 def poll_once_v4(
     cfg: dict[str, Any],
     snapshot: Path,
@@ -435,13 +462,7 @@ def poll_once_v4(
             current = _snapshot_payload(snapshot)
             rows = current.get("devices") if isinstance(current.get("devices"), list) else []
             devices = [row for row in rows if isinstance(row, dict)]
-            live = [
-                row
-                for row in devices
-                if not bool(
-                    (row.get("freshness") if isinstance(row.get("freshness"), dict) else {}).get("stale")
-                )
-            ]
+            live = [row for row in devices if not _is_stale(row)]
             if not live:
                 return
 
@@ -457,7 +478,8 @@ def poll_once_v4(
                 joined = sum(
                     1
                     for row in enriched
-                    if isinstance(row.get("api_capabilities"), dict)
+                    if not _is_stale(row)
+                    and isinstance(row.get("api_capabilities"), dict)
                     and row["api_capabilities"].get("per_port_traffic") is True
                 )
                 logging.info(
@@ -470,18 +492,22 @@ def poll_once_v4(
                     "UniFi per-port traffic enrichment unavailable; official telemetry remains active: %s",
                     core.privacy_safe_error_type(exc, "network_api_unavailable"),
                 )
-                enriched = [
-                    mark_traffic_unavailable(row, previous_by_id.get(str(row.get("id") or "")))
-                    if row in live
-                    else row
-                    for row in devices
-                ]
+                enriched = []
+                for row in devices:
+                    if _is_stale(row):
+                        enriched.append(row)
+                        continue
+                    enriched.append(
+                        mark_traffic_unavailable(
+                            row,
+                            previous_by_id.get(str(row.get("id") or "")),
+                        )
+                    )
 
             # Only live official devices are republished. Stale devices remain
             # offline exactly as the core poll marked them.
             for row in enriched:
-                freshness = row.get("freshness") if isinstance(row.get("freshness"), dict) else {}
-                if bool(freshness.get("stale")):
+                if _is_stale(row):
                     continue
                 publish_enriched_device(current_pub, row)
 
