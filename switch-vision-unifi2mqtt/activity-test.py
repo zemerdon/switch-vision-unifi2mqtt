@@ -146,6 +146,11 @@ def main() -> int:
     )
     assert failed_list[0]["api_capabilities"]["per_port_traffic"] is False
 
+    malformed = official_device()
+    malformed["ports"].append({"idx": None, "state": "DOWN"})
+    unavailable = activity.mark_traffic_unavailable(malformed, first)
+    assert unavailable["api_capabilities"]["per_port_traffic"] is False
+
     # The classic path is identical for local and remote transports. UniFiClient
     # adds the Site Manager connector prefix when transport=remote.
     remote = core.UniFiClient("", "auto", "key", True, False, "remote", "host-123")
@@ -179,6 +184,37 @@ def main() -> int:
     assert any(topic.endswith("/port/4/activity") for topic in topics)
     assert any(topic.endswith("/port/4/rx_bytes") for topic in topics)
     assert any("binary_sensor" in topic and topic.endswith("/config") for topic in topics)
+
+    # Multi-controller traffic publishing must use exactly the same scoped ID as
+    # the base NamespacedPublisher, never the raw device ID.
+    class FakeNamespacedPublisher:
+        topic_prefix = "switch_vision/unifi"
+        discovery_prefix = "homeassistant"
+        def __init__(self):
+            self.states = []
+            self.discovery_rows = []
+        def _namespaced_device(self, device):
+            clone = dict(device)
+            clone["id"] = "c_deadbeef_device_uuid"
+            return clone
+        def publish(self, topic, value):
+            self.states.append((topic, value))
+        def discovery(self, component, uid, payload):
+            self.discovery_rows.append((component, uid, payload))
+
+    scoped = FakeNamespacedPublisher()
+    activity.publish_enriched_device(scoped, changed)
+    state_topics = [topic for topic, _value in scoped.states]
+    assert state_topics
+    assert all("/device_uuid/" not in topic for topic in state_topics)
+    assert all("/c_deadbeef_device_uuid/" in topic for topic in state_topics)
+    assert scoped.discovery_rows
+    assert all(
+        row[2]["state_topic"].startswith(
+            "switch_vision/unifi/c_deadbeef_device_uuid/"
+        )
+        for row in scoped.discovery_rows
+    )
 
     print("Switch Vision UniFi2MQTT 4.0 per-port activity regression: PASS")
     return 0
