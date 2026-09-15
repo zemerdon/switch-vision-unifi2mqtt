@@ -24,7 +24,7 @@ jobs:
       - name: Install test dependency
         run: python -m pip install --disable-pip-version-check paho-mqtt
       - name: Python syntax
-        run: python -m py_compile release-contract-test.py switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/controller_config.py switch-vision-unifi2mqtt/multi_controller.py switch-vision-unifi2mqtt/multi_controller_probe.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/multi-controller-test.py switch-vision-unifi2mqtt/multi-controller-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+        run: python -m py_compile release-contract-test.py switch-vision-unifi2mqtt/unifi2mqtt.py switch-vision-unifi2mqtt/port_activity.py switch-vision-unifi2mqtt/runtime_v4.py switch-vision-unifi2mqtt/classic_port_probe.py switch-vision-unifi2mqtt/controller_config.py switch-vision-unifi2mqtt/multi_controller.py switch-vision-unifi2mqtt/multi_controller_probe.py switch-vision-unifi2mqtt/activity-test.py switch-vision-unifi2mqtt/classic-port-probe-test.py switch-vision-unifi2mqtt/multi-controller-test.py switch-vision-unifi2mqtt/multi-controller-probe-test.py switch-vision-unifi2mqtt/self-test.py switch-vision-unifi2mqtt/hardening-test.py switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
       - name: Shell syntax
         run: bash -n switch-vision-unifi2mqtt/run.sh
       - name: Release publisher contract
@@ -34,7 +34,7 @@ jobs:
           grep -q 'mqtt:need' switch-vision-unifi2mqtt/config.yaml
           grep -q "bashio::services mqtt 'host'" switch-vision-unifi2mqtt/run.sh
           grep -q 'USE_SUPERVISOR_MQTT' switch-vision-unifi2mqtt/run.sh
-          grep -q '^exec python3 /multi_controller.py ' switch-vision-unifi2mqtt/run.sh
+          grep -q '^exec python3 /runtime_v4.py ' switch-vision-unifi2mqtt/run.sh
       - name: Multi-controller packaging and privacy contract
         run: |
           grep -q '^  controllers: \[\]' switch-vision-unifi2mqtt/config.yaml
@@ -42,8 +42,9 @@ jobs:
           grep -q 'COPY controller_config.py /controller_config.py' switch-vision-unifi2mqtt/Dockerfile
           grep -q 'COPY multi_controller.py /multi_controller.py' switch-vision-unifi2mqtt/Dockerfile
           grep -q 'COPY multi_controller_probe.py /multi_controller_probe.py' switch-vision-unifi2mqtt/Dockerfile
-          grep -q '/multi_controller.py' switch-vision-unifi2mqtt/run.sh
-          grep -q '/multi_controller_probe.py' switch-vision-unifi2mqtt/run.sh
+          grep -q 'COPY port_activity.py /port_activity.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q 'COPY runtime_v4.py /runtime_v4.py' switch-vision-unifi2mqtt/Dockerfile
+          grep -q '/runtime_v4.py' switch-vision-unifi2mqtt/run.sh
           grep -q -- '--state-root /data/multi_controller_state' switch-vision-unifi2mqtt/run.sh
           grep -q 'DEFAULT_STATE_ROOT = Path("/data/multi_controller_state")' switch-vision-unifi2mqtt/multi_controller.py
           ! grep -R '/share/switch_vision/unifi/controllers' README.md switch-vision-unifi2mqtt/README.md switch-vision-unifi2mqtt/*.py switch-vision-unifi2mqtt/run.sh
@@ -56,13 +57,16 @@ jobs:
           assert "branch" not in scoped
           print("opaque/bounded controller identity: PASS")
           PY
-      - name: Classic port-stat probe packaging contract
+      - name: Per-port activity packaging and privacy contract
         run: |
           grep -q 'COPY classic_port_probe.py /classic_port_probe.py' switch-vision-unifi2mqtt/Dockerfile
-          grep -q 'classic_port_traffic_probe.json' switch-vision-unifi2mqtt/run.sh
+          grep -q 'COPY port_activity.py /port_activity.py' switch-vision-unifi2mqtt/Dockerfile
           grep -q 'raw_controller_payload_stored.*False' switch-vision-unifi2mqtt/classic_port_probe.py
           grep -q 'private_identifiers_included.*False' switch-vision-unifi2mqtt/classic_port_probe.py
           grep -q 'private_identifiers_included' switch-vision-unifi2mqtt/multi_controller.py
+          grep -q '/proxy/network/api/s/' switch-vision-unifi2mqtt/port_activity.py
+          grep -q 'per_port_traffic' switch-vision-unifi2mqtt/port_activity.py
+          ! grep -q 'x_authkey' switch-vision-unifi2mqtt/port_activity.py
       - name: Version and repository metadata
         run: |
           python - <<'PY'
@@ -72,11 +76,11 @@ jobs:
           version = (root / 'VERSION').read_text().strip()
           cfg = (root / 'switch-vision-unifi2mqtt/config.yaml').read_text()
           run = (root / 'switch-vision-unifi2mqtt/run.sh').read_text()
-          py = (root / 'switch-vision-unifi2mqtt/unifi2mqtt.py').read_text()
+          activity = (root / 'switch-vision-unifi2mqtt/port_activity.py').read_text()
           probe = (root / 'switch-vision-unifi2mqtt/classic_port_probe.py').read_text()
           assert re.search(r'^version:\s*["\']?' + re.escape(version) + r'["\']?\s*$', cfg, re.M)
           assert f'VERSION="{version}"' in run
-          assert f'VERSION = "{version}"' in py
+          assert f'VERSION = "{version}"' in activity
           assert f'VERSION = "{version}"' in probe
           assert 'https://github.com/zemerdon/switch-vision-unifi2mqtt' in cfg
           print('metadata/version checks: PASS')
@@ -91,9 +95,11 @@ jobs:
           python switch-vision-unifi2mqtt/self-test.py
           python switch-vision-unifi2mqtt/hardening-test.py
           python switch-vision-unifi2mqtt/mqtt-lifecycle-test.py
+          python switch-vision-unifi2mqtt/activity-test.py
           python switch-vision-unifi2mqtt/classic-port-probe-test.py
           python switch-vision-unifi2mqtt/multi-controller-test.py
           python switch-vision-unifi2mqtt/multi-controller-probe-test.py
+          python switch-vision-unifi2mqtt/optional-profile-test.py
 
   container-build:
     name: Container build / ${{ matrix.arch }}
