@@ -7,10 +7,12 @@ RUN apk add --no-cache python3 py3-paho-mqtt
 
 COPY run.sh /run.sh
 COPY unifi2mqtt.py /unifi2mqtt.py
+COPY port_activity.py /port_activity.py
+COPY runtime_v4.py /runtime_v4.py
 COPY classic_port_probe.py /classic_port_probe.py
 COPY controller_config.py /controller_config.py
 COPY multi_controller.py /multi_controller.py
 COPY multi_controller_probe.py /multi_controller_probe.py
-RUN chmod a+x /run.sh /unifi2mqtt.py /classic_port_probe.py /controller_config.py /multi_controller.py /multi_controller_probe.py
+RUN chmod a+x /run.sh /unifi2mqtt.py /port_activity.py /runtime_v4.py /classic_port_probe.py /controller_config.py /multi_controller.py /multi_controller_probe.py
 
 CMD [ "/run.sh" ]
