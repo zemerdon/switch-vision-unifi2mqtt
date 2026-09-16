@@ -1,3 +1,11 @@
+## v4.0.2
+
+- Consume the shared Switch Vision device-control state from `/share/switch_vision/device-control.json`.
+- Treat a disabled UniFi device as inventory-only: keep enough identity for the Hub to display and re-enable it, but skip per-device Integration API detail/statistics calls, classic activity enrichment, and normal MQTT publication.
+- Retire retained MQTT state/discovery topics once when a device becomes disabled, then resume detail/statistics/activity polling and publication automatically on the next poll after it is re-enabled.
+- Keep multi-controller identities aligned with the aggregate device IDs exposed to Discovery/Hub.
+- Add an offline regression proving a disabled device receives zero detail/statistics polling calls and no normal device publication.
+
 # Changelog
 
 ## v4.0.1

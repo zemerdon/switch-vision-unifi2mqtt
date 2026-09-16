@@ -535,6 +535,60 @@ def main() -> int:
     finally:
         m.Publisher, m.UniFiClient = old_publisher, old_api
 
+    # Shared device control must stop per-device UniFi polling while retaining
+    # enough identity in the snapshot for the Hub to re-enable the device.
+    class DisabledApi:
+        detail_calls = []
+        stats_calls = []
+        def __init__(self, *args, **kwargs):
+            pass
+        def list_devices(self):
+            return [{"id": "off", "name": "Disabled Switch", "model": "USW Flex Mini", "features": ["switching"]}]
+        def detail(self, device_id):
+            self.detail_calls.append(device_id)
+            raise AssertionError("disabled device detail polling must not run")
+        def stats(self, device_id):
+            self.stats_calls.append(device_id)
+            raise AssertionError("disabled device stats polling must not run")
+
+    old_publisher, old_api = m.Publisher, m.UniFiClient
+    old_control_load = m.device_control_state.load
+    try:
+        m.Publisher, m.UniFiClient = CapturePublisher, DisabledApi
+        m.device_control_state.load = lambda: {
+            "schema_version": 1,
+            "states": {"unifi:off": "disabled"},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            snapshot_path = Path(td) / "devices.json"
+            previous_device = {
+                "id": "off", "name": "Disabled Switch", "model": "USW Flex Mini",
+                "state": "ONLINE", "control_enabled": True, "ports": [{"idx": 1, "state": "UP"}],
+                "system": {}, "api_capabilities": {},
+            }
+            snapshot_path.write_text(
+                json.dumps({"schema_version": 1, "devices": [previous_device]}),
+                encoding="utf-8",
+            )
+            m.poll_once(
+                {"controller_url": "https://controller", "site_id": "site", "api_key": "key", "verify_ssl": "false"},
+                snapshot_path,
+            )
+            refreshed = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            assert DisabledApi.detail_calls == [] and DisabledApi.stats_calls == []
+            assert len(refreshed["devices"]) == 1
+            disabled = refreshed["devices"][0]
+            assert disabled["id"] == "off"
+            assert disabled["control_enabled"] is False
+            assert disabled["freshness"]["stale"] is True
+            assert disabled["freshness"]["reason"] == "disabled_by_user"
+            assert CapturePublisher.last is not None
+            assert "off" in CapturePublisher.last.retired
+            assert CapturePublisher.last.devices == []
+    finally:
+        m.Publisher, m.UniFiClient = old_publisher, old_api
+        m.device_control_state.load = old_control_load
+
     with tempfile.TemporaryDirectory() as td:
         snapshot_path = Path(td) / "devices.json"
         m.write_snapshot(snapshot_path, [n], 0, 120)

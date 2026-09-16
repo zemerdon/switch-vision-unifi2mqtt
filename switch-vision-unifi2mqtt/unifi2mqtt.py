@@ -20,6 +20,7 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 import paho.mqtt.client as mqtt
+import device_control as device_control_state
 
 VERSION = "3.1.4"
 STOP = False
@@ -822,6 +823,37 @@ def mark_device_stale(
     return clone
 
 
+def disabled_device_snapshot(
+    summary: dict[str, Any],
+    previous: dict[str, Any] | None,
+    *,
+    fallback_last_success_at: int = 0,
+) -> dict[str, Any]:
+    """Keep minimal identity for a disabled device without polling its details."""
+    if isinstance(previous, dict):
+        clone = json.loads(json.dumps(previous))
+    else:
+        clone = {
+            "id": str(summary.get("id") or ""),
+            "name": str(summary.get("name") or summary.get("model") or "UniFi Switch"),
+            "model": str(summary.get("model") or "Unknown"),
+            "firmware": str(summary.get("firmwareVersion") or ""),
+            "ip_address": str(summary.get("ipAddress") or ""),
+            "mac_address": normalized_mac_address(summary),
+            "ports": [],
+            "system": {},
+            "api_capabilities": {"port_detail": False, "per_port_traffic": False},
+        }
+    clone["control_enabled"] = False
+    clone["state"] = "DISABLED"
+    clone = mark_device_stale(
+        clone,
+        "disabled_by_user",
+        fallback_last_success_at=fallback_last_success_at,
+    )
+    return clone
+
+
 def snapshot_stale_after_seconds(cfg: dict[str, Any]) -> int:
     """Return the maximum age of a live snapshot before consumers must reject it."""
     try:
@@ -845,6 +877,7 @@ def normalize_device(summary: dict[str, Any], detail: dict[str, Any], stats: dic
         "ip_address": str(source.get("ipAddress") or ""),
         "mac_address": normalized_mac_address(source),
         "state": str(source.get("state", "UNKNOWN")).upper(),
+        "control_enabled": True,
         "ports": ports,
         "system": {
             "uptime_sec": stats.get("uptimeSec"),
@@ -976,6 +1009,10 @@ class Publisher:
             60,
         )
         self.client.loop_start()
+
+    def control_device_id(self, raw_device_id: str) -> str:
+        """Return the stable shared-control identity for one UniFi device."""
+        return str(raw_device_id or "").strip()
 
     def _bridge_topic(self) -> str:
         return getattr(
@@ -1706,9 +1743,35 @@ def _poll_once_unlocked(
                 empty_switch_polls,
             )
 
+        control_states = device_control_state.load().get("states", {})
         for summary in switches:
             did = str(summary.get("id", "")).strip()
             if not did:
+                continue
+            control_identity = did
+            resolver = getattr(pub, "control_device_id", None)
+            if callable(resolver):
+                control_identity = str(resolver(did) or did).strip()
+            if control_states.get(f"unifi:{control_identity}") == "disabled":
+                previous_item = previous_by_id.get(did)
+                if isinstance(previous_item, dict) and previous_item.get("control_enabled") is not False:
+                    removed = pub.remove_device(previous_item)
+                    logging.info(
+                        "Disabled UniFi device %s; retired %d retained MQTT topic(s).",
+                        summary.get("name") or did,
+                        len(removed),
+                    )
+                normalized.append(
+                    disabled_device_snapshot(
+                        summary,
+                        previous_item,
+                        fallback_last_success_at=previous_generated_at,
+                    )
+                )
+                logging.info(
+                    "UniFi device %s is disabled; skipped detail, stats, activity and MQTT polling.",
+                    summary.get("name") or did,
+                )
                 continue
             try:
                 item = normalize_device(summary, api.detail(did), api.stats(did))

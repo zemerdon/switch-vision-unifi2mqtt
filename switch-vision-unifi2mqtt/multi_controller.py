@@ -44,6 +44,11 @@ class NamespacedPublisher(core.Publisher):
             raise RuntimeError("controller identity namespace must not be empty")
         self.identity_namespace = text
 
+    def control_device_id(self, raw_device_id: str) -> str:
+        if not self.identity_namespace:
+            return super().control_device_id(raw_device_id)
+        return scoped_device_id(self.identity_namespace, str(raw_device_id or "").strip())
+
     def _namespaced_device(self, device: dict[str, Any]) -> dict[str, Any]:
         if not self.identity_namespace:
             return dict(device)
