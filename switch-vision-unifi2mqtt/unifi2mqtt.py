@@ -261,7 +261,7 @@ def load_config(path: Path) -> dict[str, Any]:
         data["controller_url"] = validate_controller_url(
             data["controller_url"], data["allow_insecure_http"]
         )
-        data["verify_ssl"] = truthy(data.get("verify_ssl", True))
+        data["verify_ssl"] = truthy(data.get("verify_ssl", False))
     else:
         # Remote transport is always the official Site Manager connector over
         # verified HTTPS. controller_url is deliberately ignored in this mode.
@@ -601,13 +601,15 @@ class UniFiClient:
 
 
 def client_from_config(cfg: dict[str, Any]) -> UniFiClient:
+    transport = validate_transport(cfg.get("transport", "local"))
+    verify_default = False if transport == "local" else True
     return UniFiClient(
         str(cfg.get("controller_url") or REMOTE_API_BASE),
         str(cfg.get("site_id") or "auto"),
         str(cfg.get("api_key") or ""),
-        truthy(cfg.get("verify_ssl", True)),
+        truthy(cfg.get("verify_ssl", verify_default)),
         truthy(cfg.get("allow_insecure_http", False)),
-        validate_transport(cfg.get("transport", "local")),
+        transport,
         validate_host_id(cfg.get("host_id", "auto")),
     )
 

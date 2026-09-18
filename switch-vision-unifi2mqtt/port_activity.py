@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import unifi2mqtt as core
 
-VERSION = "4.0.3"
+VERSION = "4.0.4"
 
 # Snapshot/MQTT contract for the cumulative counters proven on real UniFi
 # switching hardware. Rate fields from the classic endpoint remain deliberately

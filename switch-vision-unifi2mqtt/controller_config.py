@@ -100,7 +100,7 @@ def parse_controller_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
                 raw.get("allow_insecure_http", data.get("allow_insecure_http", False))
             )
             controller_url = core.validate_controller_url(raw.get("controller_url"), allow_http)
-            verify_ssl = core.truthy(raw.get("verify_ssl", data.get("verify_ssl", True)))
+            verify_ssl = core.truthy(raw.get("verify_ssl", data.get("verify_ssl", False)))
         else:
             controller_url = core.REMOTE_API_BASE
             allow_http = False
@@ -250,13 +250,15 @@ def parse_single_connection_profiles(
 
         # Home Assistant may materialize the new 4.x schema defaults during an
         # upgrade even though the operator only configured the legacy profile.
-        # Treat that exact all-default shape as migration metadata, not as an
-        # intentional replacement.  If any new-profile field differs from its
-        # schema default, the whole new profile is authoritative.
+        # Treat that all-default shape as migration metadata, not as an
+        # intentional replacement. TLS verification changed default in 4.0.4,
+        # so both the historical injected value (true) and the current default
+        # (false) are compatible migration metadata while the Local API key is
+        # still inherited from the legacy profile. A non-default URL/site/HTTP
+        # choice still makes the new profile authoritative as a whole.
         local_profile_is_injected_default = (
             configured_local_url in {"", DEFAULT_LOCAL_CONTROLLER_URL}
             and configured_local_site.lower() in {"", DEFAULT_PROFILE_ID}
-            and (local_verify_value is None or core.truthy(local_verify_value) is True)
             and (local_allow_value is None or core.truthy(local_allow_value) is False)
         )
         migrate_legacy_local = inherited_legacy_local and local_profile_is_injected_default
@@ -264,13 +266,13 @@ def parse_single_connection_profiles(
         if migrate_legacy_local:
             local_url = legacy_local_url or DEFAULT_LOCAL_CONTROLLER_URL
             local_site = data.get("site_id", DEFAULT_PROFILE_ID)
-            local_verify_ssl = core.truthy(data.get("verify_ssl", True))
+            local_verify_ssl = core.truthy(data.get("verify_ssl", False))
             local_allow_http = core.truthy(data.get("allow_insecure_http", False))
         else:
             local_url = configured_local_url or DEFAULT_LOCAL_CONTROLLER_URL
             local_site = configured_local_site or DEFAULT_PROFILE_ID
             local_verify_ssl = core.truthy(
-                True if local_verify_value is None else local_verify_value
+                False if local_verify_value is None else local_verify_value
             )
             local_allow_http = core.truthy(
                 False if local_allow_value is None else local_allow_value

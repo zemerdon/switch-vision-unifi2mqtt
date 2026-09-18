@@ -1,3 +1,10 @@
+## v4.0.4
+
+- Default Local UniFi TLS certificate verification to off for fresh Local-controller configuration, matching common self-hosted UniFi deployments that use a self-signed/local certificate.
+- Keep Remote / UniFi Site Manager TLS verification mandatory and keep MQTT TLS certificate verification defaulted on.
+- Preserve explicit existing Local verification choices and legacy upgrade migration semantics; only omitted/fresh Local values now resolve to off.
+- Add a permanent regression proving a fresh Local profile resolves `verify_ssl` to false while Remote remains verified HTTPS.
+
 ## v4.0.3
 
 - Preserve legacy single-controller Local configuration during upgrade when Home Assistant injects the new Local profile schema defaults. A working legacy `controller_url`, `site_id`, TLS verification choice and insecure-HTTP choice now win over unchanged new-profile defaults while the legacy API key is being inherited.

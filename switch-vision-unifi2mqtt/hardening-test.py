@@ -355,7 +355,9 @@ def main() -> int:
     app_dir = Path(__file__).resolve().parent
     config_text = (app_dir / "config.yaml").read_text(encoding="utf-8")
     run_text = (app_dir / "run.sh").read_text(encoding="utf-8")
-    assert 'verify_ssl: "true"' in config_text
+    assert 'verify_ssl: "false"' in config_text
+    assert 'local_verify_ssl: "false"' in config_text
+    assert 'mqtt_verify_ssl: "true"' in config_text
     assert 'transport: "local"' in config_text
     assert 'host_id: "auto"' in config_text
     assert 'site_id: "auto"' in config_text

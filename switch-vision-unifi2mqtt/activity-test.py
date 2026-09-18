@@ -82,7 +82,7 @@ def port(device: dict, idx: int) -> dict:
 
 
 def main() -> int:
-    assert activity.VERSION == "4.0.3"
+    assert activity.VERSION == "4.0.4"
 
     # First observation establishes the cumulative-counter baseline and must not
     # create a false activity pulse.

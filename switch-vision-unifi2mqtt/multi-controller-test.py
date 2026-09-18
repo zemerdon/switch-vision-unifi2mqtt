@@ -419,6 +419,23 @@ def test_single_priority_profiles_keep_local_and_remote_credentials_separate() -
     assert profiles[1]["api_key"] == "remote-secret"
 
 
+def test_fresh_local_profile_defaults_tls_verification_off() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_controller_url": "https://192.0.2.10:11443",
+            "local_site_id": "auto",
+            "local_api_key": "local-secret",
+        }
+    )
+    assert priority == "local"
+    assert fallback == "remote"
+    assert len(profiles) == 1
+    assert profiles[0]["transport"] == "local"
+    assert profiles[0]["verify_ssl"] is False
+
+
 def test_legacy_local_profile_beats_injected_new_defaults() -> None:
     profiles, priority, fallback = parse_single_connection_profiles(
         {
@@ -453,6 +470,37 @@ def test_legacy_local_profile_beats_injected_new_defaults() -> None:
     assert local["api_key"] == "legacy-local-key"
     assert local["verify_ssl"] is False
     assert local["allow_insecure_http"] is True
+
+
+def test_legacy_local_profile_beats_current_injected_defaults() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "transport": "local",
+            "controller_url": "https://10.20.30.40:11443",
+            "site_id": "legacy-site",
+            "api_key": "legacy-local-key",
+            "verify_ssl": "true",
+            "allow_insecure_http": "false",
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_controller_url": "https://192.168.1.1:11443",
+            "local_site_id": "auto",
+            "local_api_key": "",
+            "local_verify_ssl": "false",
+            "local_allow_insecure_http": "false",
+            "remote_host_id": "auto",
+            "remote_site_id": "auto",
+            "remote_api_key": "",
+        }
+    )
+    assert priority == "local"
+    assert fallback == "remote"
+    assert len(profiles) == 1
+    local = profiles[0]
+    assert local["controller_url"] == "https://10.20.30.40:11443"
+    assert local["site_id"] == "legacy-site"
+    assert local["verify_ssl"] is True
+    assert local["api_key"] == "legacy-local-key"
 
 
 def test_explicit_new_local_profile_wins_as_a_whole() -> None:
@@ -675,7 +723,9 @@ def main() -> int:
     test_removed_controller_state_is_preserved_if_retirement_fails()
     test_unsafe_stored_controller_namespace_fails_closed()
     test_single_priority_profiles_keep_local_and_remote_credentials_separate()
+    test_fresh_local_profile_defaults_tls_verification_off()
     test_legacy_local_profile_beats_injected_new_defaults()
+    test_legacy_local_profile_beats_current_injected_defaults()
     test_explicit_new_local_profile_wins_as_a_whole()
     test_legacy_remote_profile_beats_injected_new_defaults()
     test_single_configured_profile_becomes_effective_priority()

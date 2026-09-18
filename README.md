@@ -116,6 +116,8 @@ The existing local configuration remains supported. `transport` defaults to `loc
 
 The app configuration includes an optional `api_key` field so Home Assistant can expose it in the app configuration UI. Existing saved keys are preserved.
 
+Fresh Local profiles default `verify_ssl` to `false` because self-hosted/local UniFi controllers commonly use a local or self-signed certificate. Enable certificate verification when the Local controller presents a certificate trusted by the Home Assistant host. Remote Site Manager connections always use verified HTTPS.
+
 Site selection works as follows:
 
 - `site_id` defaults to `auto`.
