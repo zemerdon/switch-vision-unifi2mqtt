@@ -419,6 +419,102 @@ def test_single_priority_profiles_keep_local_and_remote_credentials_separate() -
     assert profiles[1]["api_key"] == "remote-secret"
 
 
+def test_legacy_local_profile_beats_injected_new_defaults() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "transport": "local",
+            "controller_url": "https://10.20.30.40:11443",
+            "site_id": "legacy-site",
+            "api_key": "legacy-local-key",
+            "verify_ssl": "false",
+            "allow_insecure_http": "true",
+            # These values match the new 4.x schema defaults and may be injected
+            # by Home Assistant during an upgrade even though the user never
+            # intentionally configured the new Local profile fields.
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_controller_url": "https://192.168.1.1:11443",
+            "local_site_id": "auto",
+            "local_api_key": "",
+            "local_verify_ssl": "true",
+            "local_allow_insecure_http": "false",
+            "remote_host_id": "auto",
+            "remote_site_id": "auto",
+            "remote_api_key": "",
+        }
+    )
+    assert priority == "local"
+    assert fallback == "remote"
+    assert len(profiles) == 1
+    local = profiles[0]
+    assert local["transport"] == "local"
+    assert local["controller_url"] == "https://10.20.30.40:11443"
+    assert local["site_id"] == "legacy-site"
+    assert local["api_key"] == "legacy-local-key"
+    assert local["verify_ssl"] is False
+    assert local["allow_insecure_http"] is True
+
+
+def test_explicit_new_local_profile_wins_as_a_whole() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "transport": "local",
+            "controller_url": "https://10.20.30.40:11443",
+            "site_id": "legacy-site",
+            "api_key": "legacy-local-key",
+            "verify_ssl": "false",
+            "allow_insecure_http": "true",
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            # One non-default field proves that this is an intentional new
+            # profile, so the remaining new-profile defaults must not be
+            # back-filled piecemeal from legacy state.
+            "local_controller_url": "https://10.99.0.5:11443",
+            "local_site_id": "auto",
+            "local_api_key": "",
+            "local_verify_ssl": "true",
+            "local_allow_insecure_http": "false",
+            "remote_host_id": "auto",
+            "remote_site_id": "auto",
+            "remote_api_key": "",
+        }
+    )
+    assert priority == "local"
+    assert fallback == "remote"
+    assert len(profiles) == 1
+    local = profiles[0]
+    assert local["controller_url"] == "https://10.99.0.5:11443"
+    assert local["site_id"] == "auto"
+    assert local["verify_ssl"] is True
+    assert local["allow_insecure_http"] is False
+    assert local["api_key"] == "legacy-local-key"
+
+
+def test_legacy_remote_profile_beats_injected_new_defaults() -> None:
+    profiles, priority, fallback = parse_single_connection_profiles(
+        {
+            "transport": "remote",
+            "host_id": "legacy-console",
+            "site_id": "legacy-remote-site",
+            "api_key": "legacy-remote-key",
+            "priority_transport": "local",
+            "fallback_transport": "remote",
+            "local_api_key": "",
+            "remote_host_id": "auto",
+            "remote_site_id": "auto",
+            "remote_api_key": "",
+        }
+    )
+    assert priority == "remote"
+    assert fallback == "none"
+    assert len(profiles) == 1
+    remote = profiles[0]
+    assert remote["transport"] == "remote"
+    assert remote["host_id"] == "legacy-console"
+    assert remote["site_id"] == "legacy-remote-site"
+    assert remote["api_key"] == "legacy-remote-key"
+
+
 def test_single_configured_profile_becomes_effective_priority() -> None:
     profiles, priority, fallback = parse_single_connection_profiles(
         {
@@ -579,6 +675,9 @@ def main() -> int:
     test_removed_controller_state_is_preserved_if_retirement_fails()
     test_unsafe_stored_controller_namespace_fails_closed()
     test_single_priority_profiles_keep_local_and_remote_credentials_separate()
+    test_legacy_local_profile_beats_injected_new_defaults()
+    test_explicit_new_local_profile_wins_as_a_whole()
+    test_legacy_remote_profile_beats_injected_new_defaults()
     test_single_configured_profile_becomes_effective_priority()
     test_single_priority_fails_over_and_returns_to_priority()
     print("multi-controller and priority/fallback regression tests: PASS")

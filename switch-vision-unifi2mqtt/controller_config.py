@@ -12,6 +12,8 @@ import unifi2mqtt as core
 
 CONTROLLER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCOPED_DEVICE_ID_LENGTH = 128
+DEFAULT_LOCAL_CONTROLLER_URL = "https://192.168.1.1:11443"
+DEFAULT_PROFILE_ID = "auto"
 
 
 def load_raw_options(path: Path) -> dict[str, Any]:
@@ -227,59 +229,81 @@ def parse_single_connection_profiles(
     if fallback == priority:
         raise RuntimeError("fallback_transport must differ from priority_transport")
 
-    local_key = _profile_api_key(data.get("local_api_key"), "local_api_key")
-    remote_key = _profile_api_key(data.get("remote_api_key"), "remote_api_key")
-    if not local_key and legacy_transport == "local":
+    explicit_local_key = _profile_api_key(data.get("local_api_key"), "local_api_key")
+    explicit_remote_key = _profile_api_key(data.get("remote_api_key"), "remote_api_key")
+    local_key = explicit_local_key
+    remote_key = explicit_remote_key
+    inherited_legacy_local = not local_key and legacy_transport == "local" and bool(legacy_key)
+    inherited_legacy_remote = not remote_key and legacy_transport == "remote" and bool(legacy_key)
+    if inherited_legacy_local:
         local_key = legacy_key
-    if not remote_key and legacy_transport == "remote":
+    if inherited_legacy_remote:
         remote_key = legacy_key
 
     profiles: dict[str, dict[str, Any]] = {}
     if local_key:
-        local_url = str(data.get("local_controller_url") or "").strip()
-        if not local_url and legacy_transport == "local":
-            local_url = str(data.get("controller_url") or "").strip()
-        if not local_url:
-            local_url = "https://192.168.1.1:11443"
-        local_allow_http = core.truthy(
-            data.get(
-                "local_allow_insecure_http",
-                data.get("allow_insecure_http", False)
-                if legacy_transport == "local"
-                else False,
-            )
+        configured_local_url = str(data.get("local_controller_url") or "").strip()
+        configured_local_site = str(data.get("local_site_id") or "").strip()
+        local_verify_value = data.get("local_verify_ssl")
+        local_allow_value = data.get("local_allow_insecure_http")
+        legacy_local_url = str(data.get("controller_url") or "").strip()
+
+        # Home Assistant may materialize the new 4.x schema defaults during an
+        # upgrade even though the operator only configured the legacy profile.
+        # Treat that exact all-default shape as migration metadata, not as an
+        # intentional replacement.  If any new-profile field differs from its
+        # schema default, the whole new profile is authoritative.
+        local_profile_is_injected_default = (
+            configured_local_url in {"", DEFAULT_LOCAL_CONTROLLER_URL}
+            and configured_local_site.lower() in {"", DEFAULT_PROFILE_ID}
+            and (local_verify_value is None or core.truthy(local_verify_value) is True)
+            and (local_allow_value is None or core.truthy(local_allow_value) is False)
         )
-        local_site = data.get("local_site_id")
-        if (local_site is None or not str(local_site).strip()) and legacy_transport == "local":
-            local_site = data.get("site_id", "auto")
+        migrate_legacy_local = inherited_legacy_local and local_profile_is_injected_default
+
+        if migrate_legacy_local:
+            local_url = legacy_local_url or DEFAULT_LOCAL_CONTROLLER_URL
+            local_site = data.get("site_id", DEFAULT_PROFILE_ID)
+            local_verify_ssl = core.truthy(data.get("verify_ssl", True))
+            local_allow_http = core.truthy(data.get("allow_insecure_http", False))
+        else:
+            local_url = configured_local_url or DEFAULT_LOCAL_CONTROLLER_URL
+            local_site = configured_local_site or DEFAULT_PROFILE_ID
+            local_verify_ssl = core.truthy(
+                True if local_verify_value is None else local_verify_value
+            )
+            local_allow_http = core.truthy(
+                False if local_allow_value is None else local_allow_value
+            )
+
         profiles["local"] = {
             "transport": "local",
             "controller_url": core.validate_controller_url(local_url, local_allow_http),
-            "host_id": "auto",
+            "host_id": DEFAULT_PROFILE_ID,
             "site_id": _profile_site_id(local_site, "local_site_id"),
             "api_key": local_key,
-            "verify_ssl": core.truthy(
-                data.get(
-                    "local_verify_ssl",
-                    data.get("verify_ssl", True)
-                    if legacy_transport == "local"
-                    else True,
-                )
-            ),
+            "verify_ssl": local_verify_ssl,
             "allow_insecure_http": local_allow_http,
         }
 
     if remote_key:
-        remote_host = data.get("remote_host_id")
-        if (remote_host is None or not str(remote_host).strip()) and legacy_transport == "remote":
-            remote_host = data.get("host_id", "auto")
-        remote_site = data.get("remote_site_id")
-        if (remote_site is None or not str(remote_site).strip()) and legacy_transport == "remote":
-            remote_site = data.get("site_id", "auto")
+        configured_remote_host = str(data.get("remote_host_id") or "").strip()
+        configured_remote_site = str(data.get("remote_site_id") or "").strip()
+        remote_profile_is_injected_default = (
+            configured_remote_host.lower() in {"", DEFAULT_PROFILE_ID}
+            and configured_remote_site.lower() in {"", DEFAULT_PROFILE_ID}
+        )
+        migrate_legacy_remote = inherited_legacy_remote and remote_profile_is_injected_default
+        if migrate_legacy_remote:
+            remote_host = data.get("host_id", DEFAULT_PROFILE_ID)
+            remote_site = data.get("site_id", DEFAULT_PROFILE_ID)
+        else:
+            remote_host = configured_remote_host or DEFAULT_PROFILE_ID
+            remote_site = configured_remote_site or DEFAULT_PROFILE_ID
         profiles["remote"] = {
             "transport": "remote",
             "controller_url": core.REMOTE_API_BASE,
-            "host_id": core.validate_host_id(remote_host or "auto"),
+            "host_id": core.validate_host_id(remote_host or DEFAULT_PROFILE_ID),
             "site_id": _profile_site_id(remote_site, "remote_site_id"),
             "api_key": remote_key,
             "verify_ssl": True,

@@ -1,3 +1,10 @@
+## v4.0.3
+
+- Preserve legacy single-controller Local configuration during upgrade when Home Assistant injects the new Local profile schema defaults. A working legacy `controller_url`, `site_id`, TLS verification choice and insecure-HTTP choice now win over unchanged new-profile defaults while the legacy API key is being inherited.
+- Preserve legacy Remote `host_id` and `site_id` against unchanged injected Remote profile defaults during the same migration path.
+- Keep explicitly configured new Local/Remote profile fields authoritative; the compatibility path applies only while the corresponding new API-key field is empty and the runtime is inheriting the legacy credential.
+- Add permanent Local and Remote upgrade regressions reproducing the Home Assistant default-injection shape that could otherwise redirect a previously working controller.
+
 ## v4.0.2
 
 - Consume the shared Switch Vision device-control state from `/share/switch_vision/device-control.json`.
