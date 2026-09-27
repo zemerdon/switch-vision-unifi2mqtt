@@ -1,49 +1,54 @@
 name: Publish UniFi2MQTT Release
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  pull_request:
+    types:
+      - opened
+    branches:
+      - main
     paths:
       - .sv-release-request.json
 
 concurrency:
-  group: unifi2mqtt-release-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: switch-vision-release-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   preflight:
     name: UniFi2MQTT release preflight
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main'
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/unifi2mqtt-')
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
       version: ${{ steps.request.outputs.version }}
       target_sha: ${{ steps.request.outputs.target_sha }}
+      publish: ${{ steps.request.outputs.publish }}
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - name: Checkout release request only
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
-
-      - name: Require transport-only one-file PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          mapfile -t changed < <(gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --name-only | sort -u)
-          printf 'changed: %s\n' "${changed[@]}"
-          test "${#changed[@]}" -eq 1
-          test "${changed[0]}" = ".sv-release-request.json"
 
       - name: Validate release request
         id: request
         run: |
           set -euo pipefail
+          test -f .sv-release-request.json
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA...HEAD")
+          if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != ".sv-release-request.json" ]; then
+            echo 'ERROR: UniFi2MQTT release-request PR must change only .sv-release-request.json'
+            printf 'Changed: %s\n' "${changed[@]}"
+            exit 1
+          fi
+
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import re
@@ -59,10 +64,12 @@ jobs:
               raise SystemExit('version must be strict semver x.y.z')
           if not isinstance(target, str) or not re.fullmatch(r'[0-9a-f]{40}', target):
               raise SystemExit('target_sha must be a lowercase 40-character SHA')
-          if data['publish'] is not True:
-              raise SystemExit('publish must be true')
+          publish = data['publish']
+          if not isinstance(publish, bool):
+              raise SystemExit('publish must be true or false')
           print(f'version={version}')
           print(f'target_sha={target}')
+          print(f'publish={str(publish).lower()}')
           PY
 
       - name: Require exact current main target
@@ -164,6 +171,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [preflight, validate, build]
+    if: needs.preflight.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
