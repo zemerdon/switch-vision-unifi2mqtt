@@ -1,3 +1,9 @@
+## v4.0.5
+
+- Restore the exact `UniFi Dream Machine PRO SE` controller model string as a trusted gateway/switch hybrid. UniFi2MQTT 4.0.4 could reject this proven switching device as `switching_feature_untrusted` because only shortened UDM-SE aliases were allowlisted.
+- Preserve the conservative switching-feature rule for unknown gateways and non-switch devices; this patch adds only the reviewed exact canonical model form already supported by Switch Vision Discovery.
+- Add permanent classification regressions for the full controller-reported `UniFi Dream Machine PRO SE` string while preserving the existing UDM Pro/SE/Pro Max aliases.
+
 ## v4.0.4
 
 - Default Local UniFi TLS certificate verification to off for fresh Local-controller configuration, matching common self-hosted UniFi deployments that use a self-signed/local certificate.

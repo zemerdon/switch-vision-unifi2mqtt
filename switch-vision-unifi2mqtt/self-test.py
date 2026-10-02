@@ -116,6 +116,9 @@ def main() -> int:
     assert m.switch_classification({"features": ["switching"], "model": "UDM Pro Max"}) == (
         True, "known_gateway_switch_hybrid"
     )
+    assert m.switch_classification(
+        {"features": ["switching"], "model": "UniFi Dream Machine PRO SE"}
+    ) == (True, "known_gateway_switch_hybrid")
     assert not m.is_switch({"features": ["accessPoint"], "model": "U6 Pro"})
 
 
@@ -763,6 +766,14 @@ def main() -> int:
             {
                 "model": "UDM-Pro-SE",
                 "features": ["routing"],
+            },
+            True,
+            "known_gateway_switch_hybrid",
+        ),
+        (
+            {
+                "model": "UniFi Dream Machine PRO SE",
+                "features": ["switching"],
             },
             True,
             "known_gateway_switch_hybrid",

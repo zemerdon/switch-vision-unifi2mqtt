@@ -3,13 +3,15 @@ from pathlib import Path
 workflow = Path('.github/workflows/publish-release.yml').read_text(encoding='utf-8')
 
 required = [
-    'pull_request_target:',
+    'pull_request:',
+    'types:',
+    '- opened',
+    'branches:',
+    '- main',
     '- .sv-release-request.json',
     "github.event.pull_request.head.repo.full_name == github.repository",
-    "github.event.pull_request.base.ref == 'main'",
-    'Require transport-only one-file PR',
-    'test "${#changed[@]}" -eq 1',
-    'test "${changed[0]}" = ".sv-release-request.json"',
+    "startsWith(github.event.pull_request.head.ref, 'release/unifi2mqtt-')",
+    "if [ \"${#changed[@]}\" -ne 1 ] || [ \"${changed[0]}\" != \".sv-release-request.json\" ]; then",
     'Require exact current main target',
     'test "$TARGET_SHA" = "$BASE_SHA"',
     'refs/heads/main',
@@ -37,8 +39,10 @@ if missing:
     raise SystemExit('release publisher contract missing: ' + ', '.join(repr(item) for item in missing))
 
 for forbidden in [
-    'pull_request:\n',
+    'pull_request_target:',
     'workflow_dispatch:',
+    '- synchronize',
+    '- reopened',
     'actions/checkout@v',
     "python3 - <<'PY' <<<",
     'release_json="$(gh api',
