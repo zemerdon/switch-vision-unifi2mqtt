@@ -1,3 +1,9 @@
+## v4.0.6
+
+- Add the product-owned local-first release gate at `tools/sv_release_check.py --mode release`, with exactly pinned `paho-mqtt==2.1.0` test dependency metadata for the disposable `sv release check` environment.
+- Validate exact version coherence across `VERSION`, Home Assistant app metadata, runtime version constants, changelog and README; run Python/shell syntax checks, guarded publisher-contract checks and the complete permanent regression suite while proving repository state is unchanged.
+- No UniFi runtime/API/MQTT behavior changes are introduced by this patch; the 4.0.5 UDM Pro SE classification repair and existing runtime contracts remain unchanged.
+
 ## v4.0.5
 
 - Restore the exact `UniFi Dream Machine PRO SE` controller model string as a trusted gateway/switch hybrid. UniFi2MQTT 4.0.4 could reject this proven switching device as `switching_feature_untrusted` because only shortened UDM-SE aliases were allowlisted.
