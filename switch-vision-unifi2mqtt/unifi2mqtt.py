@@ -1419,9 +1419,6 @@ def write_snapshot(
     empty_switch_polls: int = 0,
     stale_after_seconds: int = 180,
 ) -> None:
-    secure_directory(snapshot.parent)
-    if snapshot.is_symlink():
-        raise RuntimeError(f"Refusing symlink snapshot path: {snapshot}")
     payload = {
         "schema_version": 1,
         "product": "Switch Vision UniFi2MQTT",
@@ -1456,14 +1453,6 @@ def write_diagnostics(
     path = diagnostics_path_for_snapshot(
         snapshot
     )
-
-    secure_directory(path.parent)
-
-    if path.is_symlink():
-        raise RuntimeError(
-            "Refusing symlink diagnostics path: "
-            f"{path}"
-        )
 
     source_devices = (
         devices

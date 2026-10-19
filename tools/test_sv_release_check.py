@@ -43,7 +43,7 @@ class UniFiReleaseCheckTests(unittest.TestCase):
 
     def test_current_version_contract_is_coherent(self):
         version = release.resolve_version(ROOT)
-        self.assertEqual(version, "4.0.6")
+        self.assertEqual(version, "4.0.7")
         release.validate_version_contract(ROOT, version)
 
     def test_release_check_is_local_and_non_publishing(self):

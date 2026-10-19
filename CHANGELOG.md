@@ -1,3 +1,7 @@
+## v4.0.7
+
+- Use one hardened atomic JSON writer for single-controller snapshots, diagnostics and multi-controller state, preserving existing output, private permissions, symlink refusal and failure cleanup. No device, MQTT or polling changes.
+
 ## v4.0.6
 
 - Add the product-owned local-first release gate at `tools/sv_release_check.py --mode release`, with exactly pinned `paho-mqtt==2.1.0` test dependency metadata for the disposable `sv release check` environment.

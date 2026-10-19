@@ -86,8 +86,76 @@ def expect_config_failure(m, data, text):
         raise AssertionError(f"invalid configuration accepted: expected {text!r}")
 
 
+def test_shared_atomic_json_writer(m) -> None:
+    """Single/multi-controller JSON remains atomic, private and no-follow."""
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "runtime"
+        target = root / "state.json"
+        payload = {"z": 2, "a": {"ok": True}}
+
+        m.atomic_write_json(
+            target, payload, path_kind="state", permission_kind="UniFi state",
+        )
+        assert target.read_bytes() == (json.dumps(payload, indent=2) + "\n").encode()
+        assert stat.S_IMODE(root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+        m.atomic_write_json(
+            target, payload, path_kind="state", permission_kind="UniFi state",
+            sort_keys=True,
+        )
+        assert target.read_bytes() == (
+            json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        ).encode()
+        original = target.read_bytes()
+
+        for failure in ("replace", "fsync"):
+            with patch.object(m.os, failure, side_effect=OSError("simulated write failure")):
+                try:
+                    m.atomic_write_json(
+                        target, {"changed": True},
+                        path_kind="state", permission_kind="UniFi state",
+                    )
+                except OSError as exc:
+                    assert str(exc) == "simulated write failure"
+                else:
+                    raise AssertionError(f"{failure} failure did not propagate")
+            assert target.read_bytes() == original
+            assert not list(root.glob("*.tmp"))
+            assert not list(root.glob(".*.tmp"))
+
+        link = root / "link.json"
+        link.symlink_to(target)
+        try:
+            m.atomic_write_json(
+                link, {"changed": True},
+                path_kind="state", permission_kind="UniFi state",
+            )
+        except RuntimeError as exc:
+            assert "Refusing symlink state path" in str(exc)
+        else:
+            raise AssertionError("Symlinked target accepted")
+        assert target.read_bytes() == original
+
+        directory_link = Path(td) / "linked"
+        directory_link.symlink_to(root, target_is_directory=True)
+        try:
+            m.atomic_write_json(
+                directory_link / "bad.json", payload,
+                path_kind="state", permission_kind="UniFi state",
+            )
+        except RuntimeError as exc:
+            assert "Refusing symlink state directory" in str(exc)
+        else:
+            raise AssertionError("Symlinked runtime directory accepted")
+        assert not (root / "bad.json").exists()
+
+
 def main() -> int:
     m = load_module()
+    test_shared_atomic_json_writer(m)
     expected_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
     activity_source = Path(__file__).with_name("port_activity.py").read_text(encoding="utf-8")
     runtime_source = Path(__file__).with_name("runtime_v4.py").read_text(encoding="utf-8")

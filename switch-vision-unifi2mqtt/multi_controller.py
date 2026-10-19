@@ -4,11 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import re
 import shutil
 import signal
-import stat
 import sys
 import time
 from pathlib import Path
