@@ -94,39 +94,12 @@ def _read_devices(path: Path) -> list[dict[str, Any]]:
 
 
 def _secure_write_json(path: Path, payload: dict[str, Any]) -> None:
-    core.secure_directory(path.parent)
-    if path.is_symlink():
-        raise RuntimeError(f"Refusing symlink state path: {path}")
-
-    temp = path.parent / f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-
-    fd = None
-    try:
-        fd = os.open(temp, flags, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = None
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp, 0o600)
-        if stat.S_IMODE(temp.stat().st_mode) != 0o600:
-            raise RuntimeError("Temporary multi-controller state permissions are invalid")
-        os.replace(temp, path)
-        os.chmod(path, 0o600)
-        if stat.S_IMODE(path.stat().st_mode) != 0o600:
-            raise RuntimeError("Multi-controller state permissions are invalid")
-    finally:
-        if fd is not None:
-            os.close(fd)
-        try:
-            if temp.exists():
-                temp.unlink()
-        except OSError:
-            pass
+    core.atomic_write_json(
+        path, payload,
+        path_kind="state",
+        permission_kind="multi-controller state",
+        sort_keys=True,
+    )
 
 
 def _validate_controller_namespace(namespace: str) -> str:

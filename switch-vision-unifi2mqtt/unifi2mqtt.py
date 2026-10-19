@@ -1371,6 +1371,48 @@ def secure_directory(path: Path) -> None:
     _verify_permissions(path, 0o700, "UniFi state directory")
 
 
+def atomic_write_json(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    path_kind: str,
+    permission_kind: str,
+    sort_keys: bool = False,
+) -> None:
+    """Single atomic, no-follow, owner-only writer for UniFi runtime JSON."""
+    secure_directory(path.parent)
+    if path.is_symlink():
+        raise RuntimeError(f"Refusing symlink {path_kind} path: {path}")
+
+    temp = path.parent / f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    fd = None
+    try:
+        fd = os.open(temp, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            json.dump(payload, handle, indent=2, sort_keys=sort_keys)
+            handle.write(chr(10))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        _verify_permissions(temp, 0o600, f"Temporary {permission_kind}")
+        os.replace(temp, path)
+        os.chmod(path, 0o600)
+        _verify_permissions(path, 0o600, permission_kind)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            if temp.exists():
+                temp.unlink()
+        except OSError:
+            pass
+
+
 def write_snapshot(
     snapshot: Path,
     devices: list[dict[str, Any]],
@@ -1389,32 +1431,11 @@ def write_snapshot(
         "empty_switch_polls": max(0, int(empty_switch_polls)),
         "devices": devices,
     }
-    temp = snapshot.parent / f".{snapshot.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = None
-    try:
-        fd = os.open(temp, flags, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = None
-            json.dump(payload, handle, indent=2)
-            handle.write(chr(10))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp, 0o600)
-        _verify_permissions(temp, 0o600, "Temporary UniFi snapshot")
-        os.replace(temp, snapshot)
-        os.chmod(snapshot, 0o600)
-        _verify_permissions(snapshot, 0o600, "UniFi snapshot")
-    finally:
-        if fd is not None:
-            os.close(fd)
-        try:
-            if temp.exists():
-                temp.unlink()
-        except OSError:
-            pass
+    atomic_write_json(
+        snapshot, payload,
+        path_kind="snapshot",
+        permission_kind="UniFi snapshot",
+    )
 
 
 def diagnostics_path_for_snapshot(
@@ -1490,76 +1511,11 @@ def write_diagnostics(
             error_type
         )[:128]
 
-    temp = path.parent / (
-        f".{path.name}.{os.getpid()}."
-        f"{time.monotonic_ns()}.tmp"
+    atomic_write_json(
+        path, payload,
+        path_kind="diagnostics",
+        permission_kind="UniFi diagnostics",
     )
-
-    flags = (
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-    )
-
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-
-    fd = None
-
-    try:
-        fd = os.open(
-            temp,
-            flags,
-            0o600,
-        )
-
-        with os.fdopen(
-            fd,
-            "w",
-            encoding="utf-8",
-        ) as handle:
-            fd = None
-            json.dump(
-                payload,
-                handle,
-                indent=2,
-            )
-            handle.write(chr(10))
-            handle.flush()
-            os.fsync(
-                handle.fileno()
-            )
-
-        os.chmod(temp, 0o600)
-
-        _verify_permissions(
-            temp,
-            0o600,
-            "Temporary UniFi diagnostics",
-        )
-
-        os.replace(
-            temp,
-            path,
-        )
-
-        os.chmod(path, 0o600)
-
-        _verify_permissions(
-            path,
-            0o600,
-            "UniFi diagnostics",
-        )
-
-    finally:
-        if fd is not None:
-            os.close(fd)
-
-        try:
-            if temp.exists():
-                temp.unlink()
-        except OSError:
-            pass
 
 
 @contextmanager
