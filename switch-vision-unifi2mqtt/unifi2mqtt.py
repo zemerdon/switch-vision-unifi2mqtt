@@ -1254,9 +1254,16 @@ class Publisher:
         self,
         previous: dict[str, Any],
         current: dict[str, Any],
+        *,
+        published_topics: set[str] | None = None,
     ) -> set[str]:
         old_topics = retained_topics_for_device(previous, self.topic_prefix, self.discovery_prefix)
-        new_topics = retained_topics_for_device(current, self.topic_prefix, self.discovery_prefix)
+        # publish_device already calculated this exact set for the current
+        # device; do not scan its ports and rebuild it a second time.
+        new_topics = (
+            published_topics if published_topics is not None
+            else retained_topics_for_device(current, self.topic_prefix, self.discovery_prefix)
+        )
         stale = old_topics - new_topics
         for topic in sorted(stale):
             self._queue(
@@ -1724,10 +1731,12 @@ def _poll_once_unlocked(
             try:
                 item = normalize_device(summary, api.detail(did), api.stats(did))
                 normalized.append(item)
-                pub.publish_device(item)
+                published_topics = pub.publish_device(item)
                 previous_item = previous_by_id.get(did)
                 if previous_item is not None:
-                    stale = pub.cleanup_retired_topics(previous_item, item)
+                    stale = pub.cleanup_retired_topics(
+                        previous_item, item, published_topics=published_topics,
+                    )
                     if stale:
                         logging.info("%s: cleared %d retired MQTT topic(s).", item["name"], len(stale))
                 logging.info("%s (%s): %d API port(s)", item["name"], item["model"], len(item["ports"]))

@@ -62,10 +62,13 @@ class NamespacedPublisher(core.Publisher):
         self,
         previous: dict[str, Any],
         current: dict[str, Any],
+        *,
+        published_topics: set[str] | None = None,
     ) -> set[str]:
         return super().cleanup_retired_topics(
             self._namespaced_device(previous),
             self._namespaced_device(current),
+            published_topics=published_topics,
         )
 
     def remove_device(self, d: dict[str, Any]) -> set[str]:

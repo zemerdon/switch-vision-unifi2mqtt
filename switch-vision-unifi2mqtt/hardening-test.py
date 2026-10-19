@@ -346,7 +346,7 @@ def main() -> int:
             return set()
         def publish_availability(self, device, status):
             self.availability.append((device.get("id"), status))
-        def cleanup_retired_topics(self, previous, current):
+        def cleanup_retired_topics(self, previous, current, *, published_topics=None):
             return set()
         def remove_device(self, device):
             self.retired.append(device.get("id"))

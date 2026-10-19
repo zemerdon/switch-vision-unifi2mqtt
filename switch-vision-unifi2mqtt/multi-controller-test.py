@@ -182,6 +182,27 @@ def test_namespaced_publisher_identity() -> None:
     assert namespaced["id"] == f"{namespace}__same-device-id"
     assert original["id"] == "same-device-id"
 
+    # Reused topic sets are already namespaced by publish_device; forwarding
+    # must namespace only the device dicts, never the topic strings again.
+    cached = {"switch_vision/unifi/scoped-device/port/1/status"}
+    calls = []
+    existing = core.Publisher.cleanup_retired_topics
+    def inspect_cleanup(self, previous, current, *, published_topics=None):
+        calls.append((previous, current, published_topics))
+        return {"retired/topic"}
+    core.Publisher.cleanup_retired_topics = inspect_cleanup
+    try:
+        retired = publisher.cleanup_retired_topics(
+            original, original, published_topics=cached,
+        )
+    finally:
+        core.Publisher.cleanup_retired_topics = existing
+    assert retired == {"retired/topic"}
+    assert len(calls) == 1
+    assert calls[0][0]["id"] == namespaced["id"]
+    assert calls[0][1]["id"] == namespaced["id"]
+    assert calls[0][2] is cached
+
 
 def test_two_controllers_with_same_device_id_do_not_collide() -> None:
     rows = controller_rows()

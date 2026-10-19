@@ -2,9 +2,9 @@
 
 Optional read-only UniFi Network API bridge for Switch Vision.
 
-## UniFi2MQTT 4.0.7
+## UniFi2MQTT 4.0.8
 
-UniFi2MQTT 4.0.7 consolidates snapshot, diagnostics and multi-controller JSON persistence behind one secure atomic writer, preserving the UniFi API, MQTT, device and telemetry behavior. The official Network Integration API remains authoritative for discovery, device identity, port inventory, link state, negotiated speed, connector and PoE data, with non-fatal per-port traffic enrichment from the read-only classic Network `stat/device` endpoint.
+UniFi2MQTT 4.0.8 reuses the retained MQTT topic set already calculated during device publishing when cleaning up retired topics. The prior unified atomic snapshot/diagnostics writer, UniFi API contracts and telemetry behavior remain unchanged. The official Network Integration API remains authoritative for discovery, device identity, port inventory, link state, negotiated speed, connector and PoE data, with non-fatal per-port traffic enrichment from the read-only classic Network `stat/device` endpoint.
 
 The enrichment path is supported through both transports:
 
@@ -29,7 +29,7 @@ port/<n>/tx_bytes
 
 Activity is added to Home Assistant MQTT Discovery. RX/TX totals remain available as retained MQTT state without creating extra HA entities for every counter on every physical port.
 
-The activity path was live-tested on a USW Flex Mini (`USMINI`) through both Local and Remote APIs, including moving per-port counters on a 1 Gbit/s link. The 4.0.7 runtime default remains 10-second polling, aligned with Switch Vision Core's 12-second activity hold.
+The activity path was live-tested on a USW Flex Mini (`USMINI`) through both Local and Remote APIs, including moving per-port counters on a 1 Gbit/s link. The 4.0.8 runtime default remains 10-second polling, aligned with Switch Vision Core's 12-second activity hold.
 
 ## Single-controller mode
 

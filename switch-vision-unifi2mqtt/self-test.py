@@ -490,7 +490,7 @@ def main() -> int:
             return set()
         def publish_availability(self, device, status):
             self.availability.append((device.get("id"), status))
-        def cleanup_retired_topics(self, previous, current):
+        def cleanup_retired_topics(self, previous, current, *, published_topics=None):
             self.cleaned.append((previous.get("id"), current.get("id")))
             return set()
         def remove_device(self, device):
@@ -738,6 +738,26 @@ def main() -> int:
     assert {
         topic for topic, payload, qos, retain in cleanup_pub.client.messages if payload == "" and retain is True
     } == expected_stale
+
+    # The polling path reuses the topic set returned by publish_device
+    # rather than walking all current ports again during cleanup.
+    current_topics = m.retained_topics_for_device(
+        normalized, cleanup_pub.topic_prefix, cleanup_pub.discovery_prefix
+    )
+    original_topics = m.retained_topics_for_device
+    traversed = []
+    def count_topics(device, topic_prefix, discovery_prefix):
+        traversed.append(device)
+        return original_topics(device, topic_prefix, discovery_prefix)
+    m.retained_topics_for_device = count_topics
+    try:
+        cached_stale = cleanup_pub.cleanup_retired_topics(
+            previous, normalized, published_topics=current_topics,
+        )
+    finally:
+        m.retained_topics_for_device = original_topics
+    assert cached_stale == expected_stale
+    assert traversed == [previous], "current device topics were recomputed"
 
     remove_pub = object.__new__(m.Publisher)
     remove_pub.topic_prefix = "switch_vision/unifi"
