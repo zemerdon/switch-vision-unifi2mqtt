@@ -1,10 +1,7 @@
 ## v4.0.8
 
-- Reuse each device's published MQTT topic set when retiring stale topics instead of calculating the same current-device set again; preserve existing retained-message and multi-controller namespace behavior.
-
-## v4.0.7
-
-- Use one hardened atomic JSON writer for single-controller snapshots, diagnostics and multi-controller state, preserving existing output, private permissions, symlink refusal and failure cleanup. No device, MQTT or polling changes.
+- Consolidate secure atomic JSON writes for UniFi controller snapshots, diagnostics and multi-controller state while preserving file permissions, symlink refusal and failure cleanup.
+- Reuse each successfully published device's MQTT topic set when removing stale retained topics, avoiding a duplicate traversal without changing topics, QoS or controller namespace isolation.
 
 ## v4.0.6
 
